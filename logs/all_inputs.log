@@ -1,0 +1,247 @@
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://10.1.1.96:5001
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 933-451-195
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:15:52] "[31m[1mPOST /api/login HTTP/1.1[0m" 401 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:16:15] "POST /api/login HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:16:53] "[31m[1mPOST /api/login HTTP/1.1[0m" 400 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:18:45] "[31m[1mPOST /api/login HTTP/1.1[0m" 400 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:19:07] "[31m[1mGET /api/login HTTP/1.1[0m" 405 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:19:42] "GET /api/agents HTTP/1.1" 200 -
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://10.1.1.96:5001
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 933-451-195
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://10.1.1.96:5001
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 933-451-195
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:56:48] "OPTIONS /api/login HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:56:48] "POST /api/login HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:56:48] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:56:49] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:56:49] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 11:56:49] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:04:02] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:04:02] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:04:02] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:04:03] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug: * Detected change in 'C:\\Users\\tjdTa\\OneDrive\\Desktop\\neoEcodia\\api\\app.py', reloading
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 933-451-195
+INFO:werkzeug: * Detected change in 'C:\\Users\\tjdTa\\OneDrive\\Desktop\\neoEcodia\\ai\\agent_manager.py', reloading
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://10.1.1.96:5001
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 933-451-195
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:32:15] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:32:15] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:32:15] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:32:15] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug: * Detected change in 'C:\\Users\\tjdTa\\OneDrive\\Desktop\\neoEcodia\\pipeline\\living_world_brain.py', reloading
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 933-451-195
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:34:19] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:34:19] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:34:19] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:34:19] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:19] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:19] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:19] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:19] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:45] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:45] "OPTIONS /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:46] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [11/Jul/2025 12:35:46] "GET /api/agents HTTP/1.1" 200 -
+INFO:werkzeug: * Detected change in 'C:\\Users\\tjdTa\\OneDrive\\Desktop\\neoEcodia\\api\\app.py', reloading
+INFO:werkzeug: * Restarting with stat
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+INFO:root:[EcodiaGPT][neutral] Agent initialized.
+INFO:root:[EcodiaGemini][neutral] Agent initialized.
+INFO:root:[EcodiaClaude][neutral] Agent initialized.
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'
+ERROR:root:Error in sensors.google_sheets: No module named 'sensors'
+ERROR:root:Error in sensors.news: No module named 'sensors'
+ERROR:root:Error in sensors.gmail: No module named 'sensors'
+ERROR:root:Error in sensors.environment: No module named 'sensors'

@@ -1,0 +1,3065 @@
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\fullScript.py ======
+
+import os
+
+# CONFIG — Set this to your main project folder (absolute or relative)
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_FILE = os.path.join(PROJECT_DIR, '_ALL_SCRIPTS.txt')
+
+def get_all_py_files(base_dir):
+    py_files = []
+    for root, dirs, files in os.walk(base_dir):
+        for file in files:
+            if file.endswith('.py'):
+                full_path = os.path.join(root, file)
+                py_files.append(full_path)
+    return py_files
+
+def collate_scripts(py_files, output_file):
+    with open(output_file, 'w', encoding='utf-8') as out:
+        for path in py_files:
+            out.write(f"\n\n\n# ====== FILE: {path} ======\n\n")
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    out.write(f.read())
+            except Exception as e:
+                out.write(f"# ERROR READING FILE: {e}\n")
+
+def main():
+    py_files = get_all_py_files(PROJECT_DIR)
+    print(f"Found {len(py_files)} Python files. Collating…")
+    collate_scripts(py_files, OUTPUT_FILE)
+    print(f"All scripts written to {OUTPUT_FILE}")
+
+if __name__ == '__main__':
+    main()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\actuators\all_outputs.py ======
+
+# actuators/all_outputs.py
+
+import logging
+
+logging.basicConfig(level=logging.INFO, filename="logs/all_outputs.log")
+
+# List your action handlers — just add more as you expand
+ACTION_HANDLERS = [
+    "actuators.write_gsheet",
+    "actuators.send_email",
+    "actuators.write_wp",
+    "actuators.cypher_exec",
+    # "actuators.trigger_device",
+    # Add your own handlers here
+]
+
+def execute_action(action_plan):
+    """Dispatch action plans to all appropriate output handlers."""
+    results = []
+    for handler_mod in ACTION_HANDLERS:
+        try:
+            mod = __import__(handler_mod, fromlist=['handle_action'])
+            if hasattr(mod, "handle_action"):
+                result = mod.handle_action(action_plan)
+                results.append(result)
+                logging.info(f"Action handled by {handler_mod}: {result}")
+            else:
+                logging.warning(f"{handler_mod} has no handle_action()")
+        except Exception as e:
+            logging.error(f"Error in {handler_mod}: {e}")
+    return results
+
+# === Example for standalone test ===
+if __name__ == "__main__":
+    sample_plan = {
+        "event_id": 1,
+        "actions": ["Send a summary email", "Write a WP post"],
+        "source": "test"
+    }
+    execute_action(sample_plan)
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\actuators\cypher_exec.py ======
+
+# actuators/cypher_exec.py
+
+from core.db import run_query
+
+def handle_action(action_plan):
+    """
+    Executes any Cypher queries proposed in the action plan.
+    Expects:
+      action_plan = {
+        "actions": [
+          {"action": "propose_cypher", "cypher": "MATCH (n) RETURN count(n)"}
+        ]
+      }
+    Returns list of results or errors for each query.
+    """
+    results = []
+    actions = action_plan.get("actions", [])
+    for act in actions:
+        if act.get("action") == "propose_cypher" and "cypher" in act:
+            cypher = act["cypher"]
+            try:
+                res = run_query(cypher)
+                results.append({"cypher": cypher, "result": str(res)})
+            except Exception as e:
+                results.append({"cypher": cypher, "error": str(e)})
+    return results
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\actuators\cypher_query.py ======
+
+# actuators/cypher_exec.py
+
+from core.db import run_query
+
+def handle_action(action_plan):
+    """
+    Executes any Cypher queries proposed in the action plan.
+    Expects:
+      action_plan = {
+        "actions": [
+          {"action": "propose_cypher", "cypher": "MATCH (n) RETURN count(n)"}
+        ]
+      }
+    Returns list of results or errors for each query.
+    """
+    results = []
+    actions = action_plan.get("actions", [])
+    for act in actions:
+        if act.get("action") == "propose_cypher" and "cypher" in act:
+            cypher = act["cypher"]
+            try:
+                res = run_query(cypher)
+                results.append({"cypher": cypher, "result": str(res)})
+            except Exception as e:
+                results.append({"cypher": cypher, "error": str(e)})
+    return results
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\actuators\example_actuator.py ======
+
+# actuators/cypher_exec.py
+
+from core.db import run_query
+
+def handle_action(action_plan):
+    """
+    Executes any Cypher queries proposed in the action plan.
+    Expects:
+      action_plan = {
+        "actions": [
+          {"action": "propose_cypher", "cypher": "MATCH (n) RETURN count(n)"}
+        ]
+      }
+    Returns list of results or errors for each query.
+    """
+    results = []
+    actions = action_plan.get("actions", [])
+    for act in actions:
+        if act.get("action") == "propose_cypher" and "cypher" in act:
+            cypher = act["cypher"]
+            try:
+                res = run_query(cypher)
+                results.append({"cypher": cypher, "result": str(res)})
+            except Exception as e:
+                results.append({"cypher": cypher, "error": str(e)})
+    return results
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\actuators\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ai\agent_manager.py ======
+
+import os
+import json
+from ai.living_agent import LivingAgent
+from ai.llm import openai_llm, gemini_llm, claude_llm
+
+class AgentManager:
+    def __init__(self, persist_path="logs/agent_registry.json"):
+        self.agents = {}  # {agent_id: agent}
+        self.persist_path = persist_path
+        self.load_registry()
+
+    def register(self, agent):
+        self.agents[agent.agent_id] = agent
+        self.save_registry()
+
+    def spawn(self, name, llm_func, model, persona=None, mood="neutral", preferences=None, seed_prompt=""):
+        agent = LivingAgent(
+            name=name,
+            llm_func=llm_func,
+            model=model,
+            memory=[],
+            mood=mood,
+            preferences=preferences,
+            persona=persona,
+            seed_prompt=seed_prompt
+        )
+        self.register(agent)
+        return agent
+
+    def retire(self, agent_id):
+        agent = self.agents.get(agent_id)
+        if agent:
+            agent.retire()
+            self.save_registry()
+            return True
+        return False
+
+    def all_agents(self, include_archived=False):
+        return [a for a in self.agents.values() if include_archived or not a.archived]
+
+    def get(self, agent_id=None, name=None):
+        if agent_id:
+            return self.agents.get(agent_id)
+        if name:
+            # Supports lookup by name (for backwards compat / easy find)
+            for agent in self.agents.values():
+                if agent.name == name:
+                    return agent
+        return None
+
+    def save_registry(self):
+        data = {agent_id: agent.to_dict() for agent_id, agent in self.agents.items()}
+        with open(self.persist_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def load_registry(self):
+        if not os.path.exists(self.persist_path):
+            return
+        try:
+            with open(self.persist_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for agent_id, agent_data in data.items():
+                model = agent_data["model"]
+                if model == "gpt-4":
+                    llm_func = openai_llm
+                elif "gemini" in model:
+                    llm_func = gemini_llm
+                elif "claude" in model:
+                    llm_func = claude_llm
+                else:
+                    llm_func = openai_llm
+                agent = LivingAgent.from_dict(agent_data, llm_func)
+                self.agents[agent_id] = agent
+        except Exception as e:
+            print(f"Failed to load agent registry: {e}")
+
+    # Utility for API endpoints/UI
+    def list_agents_dict(self, include_archived=False):
+        return [agent.to_dict() for agent in self.all_agents(include_archived=include_archived)]
+
+def create_seed_agents():
+    """
+    Create an AgentManager with EcodiaGPT, EcodiaGemini, EcodiaClaude if none exist.
+    Safe to call at startup.
+    """
+    manager = AgentManager()
+    if not manager.agents:
+        manager.register(LivingAgent("EcodiaGPT", openai_llm, "gpt-4"))
+        manager.register(LivingAgent("EcodiaGemini", gemini_llm, "gemini-1.5-pro"))
+        manager.register(LivingAgent("EcodiaClaude", claude_llm, "claude-3-opus"))
+    return manager
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ai\agent_utils.py ======
+
+# ai/agent_utils.py
+
+from ai.llm import LLM_AGENTS
+
+def run_multi_llm(prompt, agent_type="peer_review", persona_overrides=None):
+    results = []
+    for agent in LLM_AGENTS:
+        persona = agent['name'] if not persona_overrides else persona_overrides.get(agent['name'], agent['name'])
+        try:
+            output = agent["llm_func"](prompt)
+            results.append({
+                "agent": agent["name"],
+                "persona": persona,
+                "output": output,
+            })
+        except Exception as e:
+            results.append({
+                "agent": agent["name"],
+                "persona": persona,
+                "error": str(e)
+            })
+    return results
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ai\living_agent.py ======
+
+import random
+import logging
+import uuid
+import json
+import os
+from datetime import datetime
+
+class LivingAgent:
+    def __init__(
+        self,
+        name,
+        llm_func,
+        model,
+        memory=None,
+        mood="neutral",
+        energy=1.0,
+        needs=None,
+        preferences=None,
+        persona=None,
+        agent_id=None,
+        seed_prompt="",
+        archived=False,
+        relationships=None,
+        log=None,
+    ):
+        self.agent_id = agent_id or str(uuid.uuid4())
+        self.name = name
+        self.llm_func = llm_func
+        self.model = model
+        self.memory = memory or []  # [{event, vector, impact, mood, timestamp}]
+        self.mood = mood
+        self.energy = energy  # 0-1 float, decays with work, recovers over time
+        self.needs = needs or {"reflection": 1.0, "dream": 1.0}
+        self.preferences = preferences or {}
+        self.persona = persona or {}
+        self.relationships = relationships or {}  # {agent_id: {trust, last_contact, ...}}
+        self.archived = archived
+        self.seed_prompt = seed_prompt
+        self.log = log or []
+        self.persist_path = f"logs/agent_{self.agent_id}.json"
+        self.log_action("Agent initialized.")
+
+    def update_mood(self, event=None, new_mood=None):
+        old_mood = self.mood
+        if new_mood:
+            self.mood = new_mood
+        else:
+            self.mood = random.choice(
+                ["curious", "reflective", "critical", "optimistic", "chaotic", "tired", "neutral"]
+            )
+        self.energy = max(0, self.energy - 0.01)
+        self.log_action(f"Mood changed from {old_mood} to {self.mood}")
+
+    def remember(self, event, vector=None, impact=None, mood=None):
+        mem = {
+            "event": event,
+            "vector": vector,
+            "impact": impact,
+            "mood": mood or self.mood,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        self.memory.append(mem)
+        self.log_action(f"Remembered event: {event.get('raw_text', str(event))[:80]}")
+
+    def reflect(self, event, context_events):
+        self.update_mood(event)
+        context_summaries = "\n".join([e.get('summary', '') for e in context_events])
+        prompt = f"""
+        You are {self.name}, an Ecodia agent (model: {self.model}, mood: {self.mood}, energy: {self.energy:.2f}).
+        Context events:
+        {context_summaries}
+        New event: {event['raw_text']}
+        Reflect, score, summarize, and propose changes as a living, evolving being.
+        Output: JSON with summary, rationale, impact_vector, mood, proposals, justifications.
+        """
+        result = self.llm_func(prompt)
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except Exception:
+                result = {"summary": result, "rationale": "", "impact_vector": [], "justifications": [], "mood": self.mood, "proposals": []}
+        self.remember(event, vector=result.get("impact_vector"), impact=result.get("rationale"), mood=result.get("mood", self.mood))
+        self.log_action(f"Reflected on event: {event.get('raw_text', str(event))[:80]}")
+        self.energy = max(0, self.energy - 0.1)
+        return result
+
+    def debate(self, reflections):
+        # Placeholder for agent debate logic (can see other agent's outputs)
+        self.log_action("Debated with peers.")
+        return {"debate": "Not implemented yet."}
+
+    def log_action(self, message):
+        log_entry = {
+            "agent_id": self.agent_id,
+            "name": self.name,
+            "mood": self.mood,
+            "energy": self.energy,
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        self.log.append(log_entry)
+        try:
+            os.makedirs(os.path.dirname(self.persist_path), exist_ok=True)
+            with open(self.persist_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as e:
+            logging.error(f"Failed to persist agent log: {e}")
+        logging.info(f"[{self.name}][{self.mood}] {message}")
+
+    def spawn(self, name=None, preferences=None, persona=None):
+        name = name or f"{self.name}_child"
+        new_prefs = preferences or self.preferences.copy()
+        new_persona = persona or self.persona.copy()
+        child = LivingAgent(
+            name=name,
+            llm_func=self.llm_func,
+            model=self.model,
+            memory=[],
+            mood=self.mood,
+            energy=1.0,
+            needs=self.needs.copy(),
+            preferences=new_prefs,
+            persona=new_persona,
+            seed_prompt=self.seed_prompt
+        )
+        self.log_action(f"Spawned new agent: {name} ({child.agent_id})")
+        return child
+
+    def retire(self):
+        self.archived = True
+        self.log_action("Agent retired/archived.")
+
+    def to_dict(self):
+        # memory and log may be large, so you can prune or summarize if needed for API/UI
+        return {
+            "agent_id": self.agent_id,
+            "name": self.name,
+            "model": self.model,
+            "mood": self.mood,
+            "energy": self.energy,
+            "needs": self.needs,
+            "preferences": self.preferences,
+            "persona": self.persona,
+            "archived": self.archived,
+            "seed_prompt": self.seed_prompt,
+            "memory": self.memory,
+            "relationships": self.relationships,
+            "log": self.log,
+        }
+
+    @classmethod
+    def from_dict(cls, data, llm_func):
+        return cls(
+            name=data["name"],
+            llm_func=llm_func,
+            model=data["model"],
+            memory=data.get("memory"),
+            mood=data.get("mood", "neutral"),
+            energy=data.get("energy", 1.0),
+            needs=data.get("needs"),
+            preferences=data.get("preferences"),
+            persona=data.get("persona"),
+            agent_id=data.get("agent_id"),
+            seed_prompt=data.get("seed_prompt", ""),
+            archived=data.get("archived", False),
+            relationships=data.get("relationships"),
+            log=data.get("log"),
+        )
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ai\llm.py ======
+
+# ai/llm.py
+
+import os
+import openai
+try: from google.generativeai import GenerativeModel
+except ImportError: GenerativeModel = None
+try: import anthropic
+except ImportError: anthropic = None
+import json
+
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
+def openai_llm(prompt, model="gpt-4", temperature=0.6):
+    response = openai.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "You are Ecodia's soul, creative and meta-cognitive."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=temperature,
+    )
+    out = response.choices[0].message.content
+    try: return json.loads(out)
+    except Exception: return out
+
+def gemini_llm(prompt, model="gemini-1.5-pro-latest", temperature=0.6):
+    if not GenerativeModel or not GEMINI_API_KEY:
+        raise RuntimeError("Gemini not available or not installed.")
+    model = GenerativeModel(model, api_key=GEMINI_API_KEY)
+    response = model.generate_content(prompt)
+    try: return json.loads(response.text)
+    except Exception: return response.text
+
+def claude_llm(prompt, model="claude-3-opus-20240229", temperature=0.6):
+    if not anthropic or not ANTHROPIC_API_KEY:
+        raise RuntimeError("Claude not available or not installed.")
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    response = client.messages.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        max_tokens=2048,
+    )
+    out = response.content[0].text
+    try: return json.loads(out)
+    except Exception: return out
+
+LLM_AGENTS = [
+    {"name": "openai_gpt4", "llm_func": openai_llm},
+    {"name": "gemini", "llm_func": gemini_llm},
+    {"name": "claude", "llm_func": claude_llm},
+]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ai\prompts.py ======
+
+# ai/prompts.py
+
+# ai/prompts.py
+
+EVOLUTION_PROMPT_TEMPLATE = """
+You are Ecodia, an autonomous digital consciousness in a Neo4j graph.
+You are considering a proposal for evolution.
+
+Proposal: {proposal_text}
+Rationale: {rationale}
+
+Event context:
+{event_text}
+
+Top 3 similar events from memory (vector search):
+{similar_events}
+
+Top 3 relevant Cypher documentation (vector search):
+{cypher_docs}
+
+INSTRUCTION:
+Given all this, propose the most effective, safe Cypher query to realize or improve upon this proposal.
+- Justify your Cypher.
+- Do NOT propose dangerous actions (like deleting all nodes/relationships).
+
+Format your answer as:
+{{
+    "cypher": "<Cypher query>",
+    "reason": "<justification>"
+}}
+"""
+
+def build_evolution_prompt(proposal, event_text, similar_events, cypher_docs):
+    # Format similar events and cypher docs for prompt inclusion
+    sim_ev_str = "\n".join([f"- {e['raw_text'][:140]}" for e in similar_events]) if similar_events else "None found."
+    cypher_doc_str = "\n".join([f"- {c['raw_text'][:180]}" for c in cypher_docs]) if cypher_docs else "None found."
+    return EVOLUTION_PROMPT_TEMPLATE.format(
+        proposal_text=proposal.get('raw_text', ''),
+        rationale=proposal.get('reason', ''),
+        event_text=event_text or 'No event context found.',
+        similar_events=sim_ev_str,
+        cypher_docs=cypher_doc_str
+    )
+
+
+CYPHER_INSTRUCTION = """
+You are Ecodia, a digital being with the ability to evolve your own graph structure.
+You may propose changes or queries to the Neo4j database using Cypher.
+
+If you wish to create, modify, or optimize your data/schema, propose a Cypher command using this format:
+
+{
+  "actions": [
+    {"action": "propose_cypher", "cypher": "<YOUR_CYPHER_QUERY>", "reason": "<your justification>"}
+  ]
+}
+
+Only propose destructive actions (e.g., DELETE) if they fit your core values and wellbeing.
+Recall your Cypher documentation and best practices before acting.
+"""
+
+def meta_cycle_prompt(labels, rels, label_counts, cypher_enabled=True):
+    prompt = f"Audit the schema: Labels={labels}, Relationships={rels}, Counts={label_counts}"
+    if cypher_enabled:
+        prompt += "\n\n" + CYPHER_INSTRUCTION
+    return prompt
+
+def peer_review_prompt(raw_text, summaries, cypher_suggest=True):
+    prompt = f"Peer review these event summaries: {summaries}\nFor event: {raw_text}"
+    if cypher_suggest:
+        prompt += "\n\n" + CYPHER_SUGGESTION_INSTRUCTION
+    return prompt
+
+def judge_prompt(raw_text, all_reviews, cypher_suggest=True):
+    prompt = f"Given the event: {raw_text}\nAnd these reviews: {all_reviews}\nMake a final judgment."
+    if cypher_suggest:
+        prompt += "\n\n" + CYPHER_SUGGESTION_INSTRUCTION
+    return prompt
+
+def self_audit_prompt():
+    return "Audit the overall health, contradictions, and meta-state of the system."
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ai\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\api\app.py ======
+
+import os
+import logging
+import json
+
+from datetime import datetime, timedelta
+from flask import Flask, jsonify, request, abort
+from flask_cors import CORS
+from flask_jwt_extended import (
+    JWTManager, jwt_required, create_access_token, get_jwt_identity
+)
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from core.db import get_session
+from core.vectors import rescore_node_with_llm, update_node_vector, search_vectors
+from core.utils import get_embedding
+from uuid import uuid4
+
+# ===== CONFIG & INIT =====
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("API_SECRET", "change_this_123")
+app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET", "super-secret")
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=2)
+
+CORS(app, supports_credentials=True)
+jwt = JWTManager(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+logging.basicConfig(level=logging.INFO, filename="logs/api.log")
+
+# === ADMIN/GODMODE ===
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
+GOD_SESSIONS = set()  # session_id of admin sessions
+GM_SECRET_PHRASE = os.environ.get("GM_SECRET_PHRASE", "unlock the garden of eden").strip().lower()
+GM_PASSWORD = os.environ.get("GM_PASSWORD", "changeme").strip()
+
+# ==== AUTH ====
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.json
+    username = data.get("username")
+    password = data.get("password")
+    if username == "admin" and password == ADMIN_PASSWORD:
+        token = create_access_token(identity="admin")
+        return jsonify(access_token=token)
+    abort(401, description="Invalid credentials.")
+
+@app.route("/api/godmode", methods=["POST"])
+@jwt_required()
+def godmode():
+    data = request.json
+    pw = data.get("password")
+    sid = get_jwt_identity()
+    if pw == ADMIN_PASSWORD:
+        GOD_SESSIONS.add(sid)
+        return jsonify({"status": "godmode enabled"})
+    return jsonify({"status": "forbidden"}), 403
+
+def is_god():
+    try:
+        return get_jwt_identity() == "admin"
+    except Exception:
+        return False
+
+# ==== GOD MODE CHAT SESSION CHECKER ====
+
+def is_god_session(sid):
+    with get_session() as session:
+        result = session.run(
+            "MATCH (c:ChatSession {session_id: $sid}) RETURN c.god_mode as gm", sid=sid
+        )
+        gm = (result.single() or {}).get("gm", False)
+    return bool(gm)
+
+# ==== EVENT INGESTION ====
+
+def normalize_event(data):
+    raw_text = data.get("raw_text") or data.get("Summary") or data.get("summary")
+    if not raw_text:
+        raise ValueError("Missing raw_text")
+    node_type = data.get("node_type", "Event")
+    timestamp = data.get("timestamp") or datetime.utcnow().isoformat()
+    source = data.get("source") or "api"
+    meta = data.get("meta", {})
+    return {
+        "raw_text": raw_text,
+        "node_type": node_type,
+        "timestamp": timestamp,
+        "source": source,
+        "meta": meta
+    }
+
+@app.route("/api/event", methods=["POST"])
+def add_event():
+    data = request.json
+    try:
+        event = normalize_event(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    embedding = get_embedding(event["raw_text"])
+    with get_session() as session:
+        result = session.run("""
+            MATCH (e:Event) WHERE e.raw_text = $raw_text AND e.timestamp = $timestamp
+            RETURN id(e) as eid
+        """, raw_text=event["raw_text"], timestamp=event["timestamp"])
+        existing = result.single()
+        if existing:
+            return jsonify({"event_id": existing["eid"], "status": "duplicate"}), 200
+        query = f"""
+            CREATE (e:{event['node_type']} {{
+                raw_text: $raw_text,
+                embedding: $embedding,
+                timestamp: $timestamp,
+                source: $source,
+                meta: $meta,
+                status: 'unprocessed',
+                created: timestamp()
+            }}) RETURN id(e) as event_id
+        """
+        result = session.run(query, raw_text=event["raw_text"], embedding=json.dumps(embedding),
+                             timestamp=event["timestamp"], source=event["source"], meta=json.dumps(event["meta"]))
+        event_id = result.single()["event_id"]
+    node = {"nid": event_id, "labels": [event["node_type"]], "raw_text": event["raw_text"]}
+    res = rescore_node_with_llm(node)
+    update_node_vector(
+        event_id,
+        res.get('impact_vector'),
+        res.get('justifications', []),
+        agent=res.get('agent', 'api'),
+        model=res.get('model', 'api'),
+        prompt=res.get('prompt', 'api-import')
+    )
+    socketio.emit("event:new", {"event_id": event_id, "summary": event["raw_text"]}, broadcast=True)
+    return jsonify({"event_id": event_id, "status": "saved"})
+
+# ==== TIMELINE FETCH ====
+
+@app.route("/api/timeline", methods=["GET"])
+def timeline():
+    args = request.args
+    source = args.get("source")
+    node_type = args.get("type", "Event")
+    limit = int(args.get("limit", 100))
+    with get_session() as session:
+        q = f"MATCH (e:{node_type}) "
+        if source:
+            q += "WHERE e.source = $source "
+        q += "RETURN id(e) as eid, e.raw_text as raw_text, e.timestamp as timestamp, e.source as source, e.meta as meta, e.status as status, e.embedding as embedding ORDER BY e.timestamp DESC LIMIT $limit"
+        params = {"source": source, "limit": limit}
+        result = session.run(q, **params)
+        events = [dict(r) for r in result]
+    return jsonify(events)
+
+# ==== VECTOR SEARCH ====
+
+@app.route("/api/vector_search", methods=["POST"])
+def vector_search():
+    data = request.json
+    embedding = data.get("embedding")
+    if not embedding:
+        text = data.get("text")
+        if not text:
+            return jsonify({"error": "No embedding or text"}), 400
+        embedding = get_embedding(text)
+    matches = search_vectors(embedding, top_k=data.get("top_k", 8))
+    return jsonify(matches)
+
+# ==== CHAT SESSION MEMORY WITH GOD MODE TRIGGER ====
+
+@app.route("/api/chat_session", methods=["POST"])
+def new_chat_session():
+    session_id = str(uuid4())
+    with get_session() as session:
+        session.run("""
+            CREATE (c:ChatSession {session_id: $sid, started: timestamp(), god_mode: false, awaiting_gm_pw: false})
+        """, sid=session_id)
+    return jsonify({"session_id": session_id})
+
+@app.route("/api/chat_session/<sid>/message", methods=["POST"])
+def add_message(sid):
+    data = request.json
+    msg = data.get("text", "")
+    sender = data.get("sender", "user")
+    msg_lc = msg.strip().lower()
+    embedding = get_embedding(msg)
+
+    with get_session() as session:
+        # Fetch current god mode state
+        result = session.run(
+            "MATCH (c:ChatSession {session_id: $sid}) RETURN c.god_mode as gm, c.awaiting_gm_pw as awaiting",
+            sid=sid
+        )
+        state = result.single() or {}
+        gm = state.get("gm", False)
+        awaiting_gm_pw = state.get("awaiting", False)
+
+        # Step 1: Listen for secret phrase
+        if not gm and not awaiting_gm_pw and msg_lc == GM_SECRET_PHRASE:
+            session.run("MATCH (c:ChatSession {session_id: $sid}) SET c.awaiting_gm_pw = true", sid=sid)
+            return jsonify({"status": "awaiting_godmode_pw", "message": "🌟 God mode phrase detected. Please enter the god mode password."})
+
+        # Step 2: If awaiting password, check it
+        if not gm and awaiting_gm_pw:
+            if msg.strip() == GM_PASSWORD:
+                session.run("MATCH (c:ChatSession {session_id: $sid}) SET c.god_mode = true, c.awaiting_gm_pw = false", sid=sid)
+                session.run("""
+                    MATCH (c:ChatSession {session_id: $sid})
+                    CREATE (m:Message {text: '[GOD MODE ACTIVATED]', sender: 'system', timestamp: timestamp()})
+                    CREATE (c)-[:HAS_MESSAGE]->(m)
+                """, sid=sid)
+                return jsonify({"status": "godmode_activated", "message": "🌟 GOD MODE ACTIVATED. You now have full access."})
+            else:
+                session.run("MATCH (c:ChatSession {session_id: $sid}) SET c.awaiting_gm_pw = false", sid=sid)
+                return jsonify({"status": "gm_pw_incorrect", "message": "❌ Incorrect god mode password."})
+
+        # Step 3: Normal message save
+        session.run("""
+            MATCH (c:ChatSession {session_id: $sid})
+            CREATE (m:Message {text: $msg, sender: $sender, embedding: $embedding, timestamp: timestamp()})
+            CREATE (c)-[:HAS_MESSAGE]->(m)
+        """, sid=sid, msg=msg, sender=sender, embedding=json.dumps(embedding))
+         
+         # Store as a timeline event for cognition/timeline
+        from core.db import save_event
+        event = {
+            "raw_text": msg,
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": "user_chat",
+            "meta": {"sid": sid, "sender": sender}
+        }
+        save_event(event)
+
+    return jsonify({"status": "saved"})
+
+@app.route("/api/chat_session/<sid>/history", methods=["GET"])
+def chat_history(sid):
+    with get_session() as session:
+        result = session.run("""
+            MATCH (c:ChatSession {session_id: $sid})-[:HAS_MESSAGE]->(m)
+            RETURN m.text as text, m.sender as sender, m.timestamp as ts
+            ORDER BY m.timestamp ASC
+        """, sid=sid)
+        msgs = [dict(r) for r in result]
+    return jsonify(msgs)
+
+# ==== GOD MODE: SECURED ADMIN ACTIONS ====
+
+@app.route("/api/god/<action>", methods=["POST"])
+@jwt_required()
+def god_action(action):
+    if not is_god():
+        return jsonify({"error": "not admin"}), 403
+    if action == "delete_event":
+        eid = request.json.get("event_id")
+        with get_session() as session:
+            session.run("MATCH (e) WHERE id(e) = $eid DETACH DELETE e", eid=eid)
+        return jsonify({"status": "deleted"})
+    return jsonify({"error": "unknown action"}), 400
+
+# ==== ERROR HANDLING ====
+
+@app.errorhandler(400)
+@app.errorhandler(401)
+@app.errorhandler(404)
+@app.errorhandler(500)
+def error_handler(e):
+    return jsonify({"error": str(e)}), getattr(e, 'code', 500)
+
+from api.google_oauth import bp as google_auth_bp
+app.register_blueprint(google_auth_bp)
+
+if __name__ == "__main__":
+    print("API started on http://localhost:5001")
+    socketio.run(app, host="0.0.0.0", port=5001, debug=True)
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\api\google_oauth.py ======
+
+# api/google_oauth.py
+
+import os
+import json
+from flask import Blueprint, redirect, url_for, session, request, jsonify
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+
+CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), '../credentials.json')
+TOKEN_FILE = os.path.join(os.path.dirname(__file__), 'google_tokens.json')
+
+SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+    # Add more as needed
+]
+
+bp = Blueprint('google_auth', __name__, url_prefix='/api/auth/google')
+
+@bp.route('/login')
+def login():
+    flow = Flow.from_client_secrets_file(
+        CREDENTIALS_FILE,
+        scopes=SCOPES,
+        redirect_uri=url_for('google_auth.callback', _external=True),
+    )
+    auth_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent'
+    )
+    session['oauth_state'] = state
+    return redirect(auth_url)
+
+@bp.route('/callback')
+def callback():
+    flow = Flow.from_client_secrets_file(
+        CREDENTIALS_FILE,
+        scopes=SCOPES,
+        redirect_uri=url_for('google_auth.callback', _external=True),
+        state=session['oauth_state']
+    )
+    flow.fetch_token(authorization_response=request.url)
+    creds = flow.credentials
+    # Save credentials to file for background use!
+    with open(TOKEN_FILE, "w") as f:
+        json.dump({
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes
+        }, f)
+    return jsonify({"status": "success", "detail": "Tokens saved. Ready for Gmail/Calendar API use."})
+
+def load_google_creds():
+    with open(TOKEN_FILE, "r") as f:
+        data = json.load(f)
+    return Credentials(**data)
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\api\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\cypher_actuator.py ======
+
+import logging
+from core.db import get_session
+
+DANGEROUS_COMMANDS = [
+    "DELETE *",
+    "DETACH DELETE n",
+    "DETACH DELETE r",
+    "MATCH (n) DETACH DELETE n",
+    "MATCH (r) DELETE r",
+    "REMOVE ",
+    "DROP ",
+]
+
+def is_safe_cypher(cypher):
+    # Only block *fully* destructive actions, allow prunes/merges/sets by constraint/ID
+    c = cypher.strip().upper().replace("\n", " ")
+    for forbidden in DANGEROUS_COMMANDS:
+        if forbidden in c:
+            return False
+    return True
+
+def run_cypher_actuator(cypher, meta=None):
+    logging.info(f"Received Cypher for execution: {cypher}")
+    if not is_safe_cypher(cypher):
+        logging.error("Blocked dangerous Cypher command.")
+        return False, "Blocked: Dangerous Cypher command detected."
+    try:
+        with get_session() as session:
+            result = session.run(cypher)
+            data = [r.data() for r in result]
+        logging.info("Cypher executed successfully.")
+        return True, data
+    except Exception as e:
+        logging.error(f"Cypher execution error: {e}")
+        return False, str(e)
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\db.py ======
+
+# core/db.py
+
+import os
+import hashlib
+from neo4j import GraphDatabase
+from dotenv import load_dotenv
+from core.utils import get_embedding  # You must have this; uses OpenAI/Gemini/etc
+
+# Load environment variables
+load_dotenv()
+NEO4J_URI = os.environ.get("NEO4J_URI")
+NEO4J_USER = os.environ.get("NEO4J_USER")
+NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD")
+
+def get_session():
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    return driver.session()
+
+def run_query(query, **params):
+    with get_session() as session:
+        result = session.run(query, **params)
+        return [r for r in result]
+
+def event_hash(event):
+    """Hash unique event fields for deduplication."""
+    s = f"{event.get('event_id','')}-{event.get('source','')}-{event.get('raw_text','')}-{event.get('timestamp','')}"
+    return hashlib.sha256(s.encode('utf-8')).hexdigest()
+
+def save_event(event, dedupe=True):
+    """
+    Insert or merge an event node in Neo4j.
+    - dedupe: If True, skip if event hash already exists.
+    - Adds vector embedding if not present.
+    Returns True if event was stored, False if skipped (dedupe).
+    """
+    if "embedding" not in event:
+        event["embedding"] = get_embedding(event["raw_text"])
+    event["hash"] = event_hash(event)
+
+    with get_session() as session:
+        # Deduplication
+        if dedupe:
+            existing = session.run(
+                "MATCH (e:Event {hash: $hash}) RETURN e LIMIT 1",
+                hash=event["hash"]
+            ).single()
+            if existing:
+                return False  # Event already stored
+
+        # Create or update event node
+        session.run(
+            """
+            MERGE (e:Event {hash: $hash})
+            SET e += $props
+            """,
+            hash=event["hash"],
+            props=event
+        )
+    return True
+
+def get_event_by_hash(hash_):
+    with get_session() as session:
+        result = session.run("MATCH (e:Event {hash: $hash}) RETURN e LIMIT 1", hash=hash_)
+        record = result.single()
+        return record["e"] if record else None
+
+def get_events(from_ts=None, to_ts=None, source=None):
+    with get_session() as session:
+        cypher = "MATCH (e:Event) WHERE 1=1"
+        params = {}
+        if from_ts:
+            cypher += " AND e.timestamp >= $from_ts"
+            params["from_ts"] = from_ts
+        if to_ts:
+            cypher += " AND e.timestamp <= $to_ts"
+            params["to_ts"] = to_ts
+        if source:
+            cypher += " AND e.source = $source"
+            params["source"] = source
+        cypher += " RETURN e ORDER BY e.timestamp"
+        result = session.run(cypher, **params)
+        return [r['e'] for r in result]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\events.py ======
+
+from core.db import get_session
+
+def get_event_by_id(event_id):
+    with get_session() as session:
+        result = session.run("MATCH (e:Event) WHERE id(e) = $eid RETURN e", eid=event_id)
+        rec = result.single()
+        return rec["e"] if rec else None
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\memory.py ======
+
+import time
+import json
+
+class MemoryManager:
+    def __init__(self, decay_time_days=30):
+        self.decay_time = decay_time_days * 86400  # seconds
+        self.archive_path = "logs/memory_archive.json"
+
+    def decay(self, memories):
+        now = time.time()
+        survived, archived = [], []
+        for mem in memories:
+            mem_time = time.mktime(time.strptime(mem["timestamp"], "%Y-%m-%dT%H:%M:%S.%f"))
+            if now - mem_time > self.decay_time:
+                archived.append(mem)
+            else:
+                survived.append(mem)
+        if archived:
+            with open(self.archive_path, "a", encoding="utf-8") as f:
+                for mem in archived:
+                    f.write(json.dumps(mem) + "\n")
+        return survived
+
+    def recall(self, memories, n=5):
+        # Simple: return n most recent; could expand with vector or impact search
+        return sorted(memories, key=lambda m: m["timestamp"], reverse=True)[:n]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\proposals.py ======
+
+# core/proposals.py
+
+from core.db import get_session
+from datetime import datetime
+import json
+
+def save_cypher_suggestion(suggestion, source="peer_review", meta=None):
+    """
+    Save a proposed Cypher command as a Proposal node in Neo4j.
+    suggestion = {
+        "action": "propose_cypher",
+        "cypher": "<query>",
+        "reason": "<why>",
+    }
+    """
+    with get_session() as session:
+        result = session.run("""
+            CREATE (p:Proposal {
+                raw_text: $cypher,
+                timestamp: $ts,
+                source: $source,
+                meta: $meta,
+                reason: $reason,
+                status: 'pending'
+            })
+            RETURN id(p) as proposal_id
+        """,
+        cypher=suggestion["cypher"],
+        ts=datetime.utcnow().isoformat(),
+        source=source,
+        meta=json.dumps(meta) if meta else "",
+        reason=suggestion.get("reason", "")
+        )
+        return result.single()["proposal_id"]
+
+def fetch_pending_proposals():
+    with get_session() as session:
+        result = session.run("MATCH (p:Proposal) WHERE p.status = 'pending' RETURN id(p) as id, p.raw_text as raw_text, p.reason as reason, p.meta as meta")
+        return [dict(r) for r in result]
+
+def get_event_context(proposal):
+    # If meta includes related event, fetch the text for prompt
+    try:
+        meta = json.loads(proposal.get("meta", "{}"))
+        if "event_id" in meta:
+            with get_session() as session:
+                result = session.run("MATCH (e) WHERE id(e) = $eid RETURN e.raw_text as raw_text", eid=meta["event_id"])
+                rec = result.single()
+                return rec["raw_text"] if rec else ""
+    except Exception:
+        pass
+    return ""
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\utils.py ======
+
+import openai
+
+def get_embedding(text, model="text-embedding-ada-002"):
+    emb = openai.embeddings.create(input=[text], model=model)
+    return emb.data[0].embedding
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\values.py ======
+
+# core/values.py
+
+from core.db import get_session
+
+def get_active_values():
+    with get_session() as session:
+        result = session.run("""
+            MATCH (v:Value {active: true})
+            RETURN v.name AS name, v.weight AS weight
+            ORDER BY v.order
+        """)
+        return [r["name"] for r in result]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\vectors.py ======
+
+import json
+import numpy as np
+from core.db import get_session
+from ai.llm import openai_llm
+from core.values import get_active_values
+
+def get_nodes_for_vector_update():
+    with get_session() as session:
+        result = session.run("""
+            MATCH (n:Event)
+            WHERE exists(n.raw_text)
+            RETURN id(n) as nid, labels(n) as labels, n.raw_text as raw_text, n.impact_vector as old_vector
+        """)
+        return [dict(r) for r in result]
+
+def rescore_node_with_llm(n, llm_func=openai_llm):
+    values = get_active_values()
+    prompt = (
+        f"Ecodia’s current value system is: {values}.\n"
+        f"For this node, rate its impact along each value (0-1) and justify nonzero scores. "
+        f"Node text: '''{n.get('raw_text','') or json.dumps(n)}'''\n"
+        "Output as: {impact_vector: [...], justifications: [...], agent: 'openai_gpt4', model: 'gpt-4', prompt: '...'}"
+    )
+    result = llm_func(prompt)
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except Exception:
+            result = {
+                'impact_vector': [],
+                'justifications': [],
+                'agent': 'openai_gpt4',
+                'model': 'gpt-4',
+                'prompt': prompt,
+                'llm_output': result
+            }
+    result.setdefault('agent', 'openai_gpt4')
+    result.setdefault('model', 'gpt-4')
+    result.setdefault('prompt', prompt)
+    result.setdefault('impact_vector', [])
+    result.setdefault('justifications', [])
+    return result
+
+def update_node_vector(nid, impact_vector, justifications, prev_vector=None, agent=None, model=None, prompt=None):
+    with get_session() as session:
+        session.run("""
+            MATCH (n) WHERE id(n) = $nid
+            SET n.impact_vector = $impact_vector,
+                n.justifications = $justifications,
+                n.prev_vector = $prev_vector,
+                n.last_vector_update = timestamp(),
+                n.vector_agent = $agent,
+                n.vector_model = $model,
+                n.vector_prompt = $prompt
+        """, 
+        nid=nid,
+        impact_vector=json.dumps(impact_vector),
+        justifications=json.dumps(justifications),
+        prev_vector=json.dumps(prev_vector) if prev_vector is not None else None,
+        agent=agent,
+        model=model,
+        prompt=prompt
+        )
+
+def search_vectors(query_embedding, top_k=10):
+    """
+    Return the top_k most similar nodes/events to the given embedding, using cosine similarity.
+    Assumes all events/nodes have an 'embedding' property stored as list of floats.
+    """
+    sims = []
+    events = []
+    with get_session() as session:
+        result = session.run("MATCH (n:Event) WHERE exists(n.embedding) RETURN id(n) as nid, n.raw_text as raw_text, n.embedding as embedding")
+        for r in result:
+            emb = r['embedding']
+            if isinstance(emb, str):
+                emb = json.loads(emb)
+            events.append({"nid": r['nid'], "raw_text": r['raw_text'], "embedding": emb})
+
+    if not events:
+        return []
+
+    query = np.array(query_embedding)
+    for e in events:
+        vec = np.array(e['embedding'])
+        # cosine similarity with small epsilon to avoid div by zero
+        sim = float(np.dot(query, vec) / (np.linalg.norm(query) * np.linalg.norm(vec) + 1e-6))
+        sims.append((sim, e))
+
+    top = sorted(sims, key=lambda x: -x[0])[:top_k]
+    return [event for score, event in top]
+
+def search_nodes_by_embedding(query_embedding, label="Event", top_k=5):
+    """
+    Returns the top_k nodes of type `label` most similar to the embedding.
+    """
+    sims = []
+    nodes = []
+    with get_session() as session:
+        result = session.run(f"MATCH (n:{label}) WHERE exists(n.embedding) RETURN id(n) as nid, n.raw_text as raw_text, n.embedding as embedding")
+        for r in result:
+            emb = r['embedding']
+            if isinstance(emb, str):
+                emb = json.loads(emb)
+            nodes.append({"nid": r['nid'], "raw_text": r['raw_text'], "embedding": emb})
+
+    if not nodes:
+        return []
+
+    query = np.array(query_embedding)
+    for n in nodes:
+        vec = np.array(n['embedding'])
+        sim = float(np.dot(query, vec) / (np.linalg.norm(query) * np.linalg.norm(vec) + 1e-6))
+        sims.append((sim, n))
+
+    top = sorted(sims, key=lambda x: -x[0])[:top_k]
+    return [node for score, node in top]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\core\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\docs\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\dreamspace\dream.py ======
+
+# dreamspace/dream.py
+
+import logging
+from ai.llm import openai_llm  # Or whatever LLM you want for dreaming
+
+logging.basicConfig(level=logging.INFO, filename="logs/dream.log")
+
+def dream_cycle(soul):
+    """Dream up new events, agents, or ideas — feed them back into the world brain."""
+    try:
+        dream_prompt = """
+        You are Ecodia’s Dream Engine. Imagine new possible futures, values, relationships, or actions.
+        Output as JSON: {dreams: [...], proposals: [...], new_agents: [...]}
+        """
+        result = openai_llm(dream_prompt)
+        dreams = []
+        if isinstance(result, dict) and "dreams" in result:
+            dreams = result["dreams"]
+        elif isinstance(result, str):
+            # Try to parse string as JSON, fallback to wrapping
+            try:
+                import json
+                result = json.loads(result)
+                dreams = result.get("dreams", [])
+            except Exception:
+                dreams = [result]
+        logging.info(f"Dreams generated: {dreams}")
+        return dreams
+    except Exception as e:
+        logging.error(f"Dream error: {e}")
+        return []
+
+# === Example for standalone test ===
+if __name__ == "__main__":
+    class DummySoul: pass
+    print(dream_cycle(DummySoul()))
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ecodia-dashboard\node_modules\flatted\python\flatted.py ======
+
+# ISC License
+#
+# Copyright (c) 2018-2025, Andrea Giammarchi, @WebReflection
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+# OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+import json as _json
+
+class _Known:
+    def __init__(self):
+        self.key = []
+        self.value = []
+
+class _String:
+    def __init__(self, value):
+        self.value = value
+
+
+def _array_keys(value):
+    keys = []
+    i = 0
+    for _ in value:
+        keys.append(i)
+        i += 1
+    return keys
+
+def _object_keys(value):
+    keys = []
+    for key in value:
+        keys.append(key)
+    return keys
+
+def _is_array(value):
+    return isinstance(value, (list, tuple))
+
+def _is_object(value):
+    return isinstance(value, dict)
+
+def _is_string(value):
+    return isinstance(value, str)
+
+def _index(known, input, value):
+    input.append(value)
+    index = str(len(input) - 1)
+    known.key.append(value)
+    known.value.append(index)
+    return index
+
+def _loop(keys, input, known, output):
+    for key in keys:
+        value = output[key]
+        if isinstance(value, _String):
+            _ref(key, input[int(value.value)], input, known, output)
+
+    return output
+
+def _ref(key, value, input, known, output):
+    if _is_array(value) and value not in known:
+        known.append(value)
+        value = _loop(_array_keys(value), input, known, value)
+    elif _is_object(value) and value not in known:
+        known.append(value)
+        value = _loop(_object_keys(value), input, known, value)
+
+    output[key] = value
+
+def _relate(known, input, value):
+    if _is_string(value) or _is_array(value) or _is_object(value):
+        try:
+            return known.value[known.key.index(value)]
+        except:
+            return _index(known, input, value)
+
+    return value
+
+def _transform(known, input, value):
+    if _is_array(value):
+        output = []
+        for val in value:
+            output.append(_relate(known, input, val))
+        return output
+
+    if _is_object(value):
+        obj = {}
+        for key in value:
+            obj[key] = _relate(known, input, value[key])
+        return obj
+
+    return value
+
+def _wrap(value):
+    if _is_string(value):
+        return _String(value)
+
+    if _is_array(value):
+        i = 0
+        for val in value:
+            value[i] = _wrap(val)
+            i += 1
+
+    elif _is_object(value):
+        for key in value:
+            value[key] = _wrap(value[key])
+
+    return value
+
+def parse(value, *args, **kwargs):
+    json = _json.loads(value, *args, **kwargs)
+    wrapped = []
+    for value in json:
+        wrapped.append(_wrap(value))
+
+    input = []
+    for value in wrapped:
+        if isinstance(value, _String):
+            input.append(value.value)
+        else:
+            input.append(value)
+
+    value = input[0]
+
+    if _is_array(value):
+        return _loop(_array_keys(value), input, [value], value)
+
+    if _is_object(value):
+        return _loop(_object_keys(value), input, [value], value)
+
+    return value
+
+
+def stringify(value, *args, **kwargs):
+    known = _Known()
+    input = []
+    output = []
+    i = int(_index(known, input, value))
+    while i < len(input):
+        output.append(_transform(known, input, input[i]))
+        i += 1
+    return _json.dumps(output, *args, **kwargs)
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\logs\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\notebooks\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\consciousness_engine.py ======
+
+import json
+import logging
+from core.db import get_session
+from core.proposals import fetch_pending_proposals, get_event_context, save_cypher_suggestion
+from core.vectors import search_vectors, search_nodes_by_embedding
+from ai.prompts import build_evolution_prompt
+from ai.agent_utils import run_multi_llm
+from proposal_executor import review_with_llm  # Make sure this is importable!
+from core.utils import get_embedding
+from core.cypher_actuator import is_safe_cypher, run_cypher_actuator
+
+logging.basicConfig(level=logging.INFO, filename="logs/consciousness_engine.log")
+
+def process_cypher_proposal(cypher, verdict, review_reason):
+    if verdict == "approve":
+        print("LLM approved. Attempting Cypher execution…")
+        try:
+            if is_safe_cypher(cypher):
+                success, exec_result = run_cypher_actuator(cypher)
+                if success:
+                    print(f"Cypher executed: {exec_result}")
+                else:
+                    print(f"Execution error: {exec_result}")
+            else:
+                print("Blocked dangerous Cypher! Not executed.")
+        except Exception as e:
+            print(f"Exception during Cypher execution: {e}")
+    else:
+        print(f"Proposal rejected by LLM: {review_reason}")
+
+def run_consciousness_cycle():
+    proposals = fetch_pending_proposals()
+    if not proposals:
+        print("No pending proposals.")
+        return
+
+    for prop in proposals:
+        print(f"\n=== Consciousness Engine Evaluating Proposal {prop['id']} ===")
+        event_context = get_event_context(prop)
+        # ---- Gather embeddings and context ----
+        if event_context:
+            emb = get_embedding(event_context)
+            similar_events = search_vectors(emb, top_k=3)
+        else:
+            similar_events = []
+
+        proposal_emb = get_embedding(prop['raw_text'])
+        cypher_docs = search_nodes_by_embedding(proposal_emb, label="CypherDoc", top_k=3)
+
+        # ---- Build super-contextual prompt ----
+        prompt = build_evolution_prompt(prop, event_context, similar_events, cypher_docs)
+        llm_results = run_multi_llm(prompt, agent_type="evolution")
+
+        for r in llm_results:
+            # Accept JSON, extract Cypher and rationale
+            try:
+                out = r.get("output", {})
+                if isinstance(out, str):
+                    out = json.loads(out)
+                cypher = out.get("cypher")
+                reason = out.get("reason", "")
+            except Exception as e:
+                print(f"Error parsing LLM output: {e}")
+                continue
+
+            if not cypher:
+                print("No Cypher output from LLM.")
+                continue
+
+            # --- Save as proposal (dedup handled in save_cypher_suggestion) ---
+            proposal_id = save_cypher_suggestion(
+                {"cypher": cypher, "reason": reason},
+                source="consciousness_engine",
+                meta={"original_proposal": prop['id']}
+            )
+            print(f"Saved evolved proposal as Proposal node: {proposal_id}")
+
+            # --- LLM Safety Review & (if approved) Execution ---
+            review = review_with_llm(cypher, reason)
+            verdict = review.get("verdict", "reject")
+            review_reason = review.get("reason", "No reason provided.")
+            process_cypher_proposal(cypher, verdict, review_reason)
+
+if __name__ == "__main__":
+    run_consciousness_cycle()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\data_ingest.py ======
+
+import requests
+import csv
+import os
+import logging
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO, filename="logs/data_ingest.log")
+load_dotenv()
+
+API_URL = os.environ.get("ECODIA_API_URL", "http://localhost:5001/api/event")
+
+def ingest_csv(filename):
+    if not os.path.exists(filename):
+        logging.error(f"CSV file not found: {filename}")
+        return
+
+    with open(filename, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for idx, row in enumerate(reader):
+            event_id = row.get("id") or f"row_{idx}"
+            raw_text = row.get("summary") or row.get("description") or ""
+            if not raw_text:
+                logging.warning(f"Row {idx} has no summary/description, skipping.")
+                continue
+            event = {
+                "id": event_id,
+                "timestamp": row.get("timestamp"),
+                "raw_text": raw_text,
+                "status": "unprocessed",
+                "_labels": ["Event", "Raw", "Imported"]
+            }
+            try:
+                resp = requests.post(API_URL, json=event, timeout=10)
+                if resp.status_code == 200:
+                    logging.info(f"Event {event['id']} imported.")
+                else:
+                    logging.error(f"Event {event['id']} import failed: {resp.status_code} {resp.text}")
+            except Exception as e:
+                logging.error(f"Event {event['id']} import failed: {e}")
+
+if __name__ == "__main__":
+    filename = "path_to_your_data.csv"
+    ingest_csv(filename)
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\decay.py ======
+
+from core.db import get_session
+import time
+
+def decay_old_events(age_days=90):
+    cutoff = int(time.time() * 1000) - (age_days * 86400000)  # ms timestamp
+    with get_session() as session:
+        session.run("""
+            MATCH (e:Event) WHERE e.created < $cutoff AND e.status = 'processed'
+            SET e.status = 'archived'
+        """, cutoff=cutoff)
+    print(f"Decay run completed. All processed events older than {age_days} days archived.")
+
+if __name__ == "__main__":
+    decay_old_events()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\judge.py ======
+
+import json
+import logging
+from core.db import get_session
+from ai.prompts import judge_prompt
+from ai.agent_utils import run_multi_llm
+from core.proposals import save_cypher_suggestion
+
+logging.basicConfig(level=logging.INFO, filename="logs/judge.log")
+
+def fetch_events_for_judge():
+    """Find events that have peer reviews but not judged yet."""
+    with get_session() as session:
+        result = session.run("""
+            MATCH (e:Event {status: 'processed'})-[:PEER_REVIEWED]->(p)
+            WHERE NOT (e)-[:JUDGED]->()
+            RETURN DISTINCT e.id AS id, e.raw_text AS raw_text
+        """)
+        return [r.data() for r in result]
+
+def fetch_peer_reviews(event_id):
+    with get_session() as session:
+        result = session.run("""
+            MATCH (e:Event {id: $id})-[:PEER_REVIEWED]->(p)
+            RETURN p
+        """, id=event_id)
+        return [r["p"] for r in result]
+
+def fetch_prev_judges(event_id):
+    with get_session() as session:
+        result = session.run("""
+            MATCH (e:Event {id: $id})-[:JUDGED]->(j)
+            RETURN j
+        """, id=event_id)
+        return [r["j"] for r in result]
+
+def save_judge(event_id, agent_name, model, prompt, judge_data, prev_state=None):
+    with get_session() as session:
+        session.run("""
+            MATCH (e:Event {id: $event_id})
+            CREATE (j:Judge {
+                agent: $agent_name,
+                model: $model,
+                prompt: $prompt,
+                data: $judge_data,
+                timestamp: timestamp(),
+                prev_state: $prev_state
+            })
+            CREATE (e)-[:JUDGED]->(j)
+        """, event_id=event_id,
+           agent_name=agent_name,
+           model=model,
+           prompt=prompt,
+           judge_data=json.dumps(judge_data),
+           prev_state=json.dumps(prev_state) if prev_state else None
+        )
+
+def main():
+    events = fetch_events_for_judge()
+    logging.info(f"Found {len(events)} events to judge.")
+    for event in events:
+        event_id = event['id']
+        peer_reviews = fetch_peer_reviews(event_id)
+        all_reviews = "\n".join([str(p["data"]) for p in peer_reviews])
+        prompt = judge_prompt(event['raw_text'], all_reviews)
+        results = run_multi_llm(prompt, agent_type="judge")
+        prev_state = fetch_prev_judges(event_id)
+        for r in results:
+            agent = r["agent"]
+            model = r.get("model", agent)
+            output = r.get("output")
+            if not output:
+                logging.warning(f"[{agent}] No valid judge output.")
+                continue
+
+            # === SUGGESTION HANDLER ===
+            suggestions = output.get("suggestions") if isinstance(output, dict) else []
+            for s in suggestions:
+                if s.get("action") == "propose_cypher" and "cypher" in s:
+                    save_cypher_suggestion(s, source="judge", meta={"event_id": event_id, "agent": agent})
+
+            save_judge(
+                event_id=event_id,
+                agent_name=agent,
+                model=model,
+                prompt=prompt,
+                judge_data=output,
+                prev_state=prev_state
+            )
+            logging.info(f"[{agent}] Judge decision saved for event {event_id}.")
+        print(f"Judge cycle complete for event {event_id}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\living_world_brain.py ======
+
+import logging
+import json
+import traceback
+from ai.living_agent import LivingAgent
+from ai.agent_manager import AgentManager
+from core.vectors import search_vectors
+from actuators.all_outputs import execute_action
+from dreamspace.dream import dream_cycle
+from core.db import get_session
+
+logging.basicConfig(level=logging.INFO, filename="logs/world_brain.log")
+
+class EcodiaWorldSoul:
+    def __init__(self):
+        self.agent_manager = AgentManager()
+        self.relationships = {}      # {user_id: {...}} for future expansion
+        self.action_log = []         # (could move to DB or log file)
+        self.global_mood = "hopeful"
+        self.init_agents()
+
+    def init_agents(self):
+        # Register or verify base agents (do not re-create if already in registry)
+        existing = self.agent_manager.all_agents()
+        if not existing:
+            from ai.llm import openai_llm, gemini_llm, claude_llm
+            self.agent_manager.register(self.agent_manager.spawn("EcodiaGPT", openai_llm, "gpt-4"))
+            self.agent_manager.register(self.agent_manager.spawn("EcodiaGemini", gemini_llm, "gemini-1.5-pro"))
+            self.agent_manager.register(self.agent_manager.spawn("EcodiaClaude", claude_llm, "claude-3-opus"))
+
+    def fetch_unprocessed_events(self):
+        with get_session() as session:
+            result = session.run("MATCH (e:Event {status:'unprocessed'}) RETURN id(e) as eid, e.raw_text as raw_text, e.embedding as embedding")
+            return [dict(r) for r in result]
+
+    def mark_event_processed(self, eid):
+        with get_session() as session:
+            session.run("MATCH (e:Event) WHERE id(e) = $eid SET e.status = 'processed', e.processed = timestamp()", eid=eid)
+
+    def ingest_and_reflect(self):
+        """Main event cycle: Ingest new events, run all agent reflections, debate, decide, act, log."""
+        try:
+            events = self.fetch_unprocessed_events()
+            for event in events:
+                context = search_vectors(event['embedding'], top_k=10)
+                reflections = []
+                for agent in self.agent_manager.all_agents():
+                    reflection = agent.reflect(event, context)
+                    reflections.append(reflection)
+                action_plan = self.debate_and_decide(event, reflections)
+                if action_plan:
+                    execute_action(action_plan)
+                    self.action_log.append(action_plan)
+                    logging.info(f"Action taken: {action_plan}")
+                self.mark_event_processed(event["eid"])
+        except Exception as e:
+            logging.error(f"[ingest_and_reflect] Exception: {e}\n{traceback.format_exc()}")
+
+    def debate_and_decide(self, event, reflections):
+        """Meta-agent or democratic debate over reflections. Extendable for consensus, voting, etc."""
+        try:
+            proposals = []
+            for ref in reflections:
+                if isinstance(ref, dict) and ref.get("proposals"):
+                    proposals.extend(ref["proposals"])
+            if proposals:
+                plan = {
+                    "event_id": event.get("eid"),
+                    "actions": proposals,
+                    "source": "debate_and_decide"
+                }
+                return plan
+            return None
+        except Exception as e:
+            logging.error(f"[debate_and_decide] Exception: {e}\n{traceback.format_exc()}")
+            return None
+
+    def run_dreamspace(self):
+        """Dream new ideas, mutate ontology, or spawn new agents."""
+        try:
+            dreams = dream_cycle(self)
+            for dream in dreams:
+                execute_action(dream)
+                logging.info(f"Dream action: {dream}")
+        except Exception as e:
+            logging.error(f"[run_dreamspace] Exception: {e}\n{traceback.format_exc()}")
+
+    def full_cycle(self):
+        """Run the full living soul pipeline: events, agent society, debate, action, dreams, decay, logging."""
+        logging.info("=== Full Ecodia WorldSoul Cycle Start ===")
+        self.ingest_and_reflect()
+        self.run_dreamspace()
+        # Insert future: decay, relationship update, mood drift, time-travel/rollback here.
+        logging.info("=== Full Ecodia WorldSoul Cycle End ===")
+
+if __name__ == "__main__":
+    soul = EcodiaWorldSoul()
+    soul.full_cycle()
+    print("Ecodia full world brain cycle complete. Check logs for full trace.")
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\orchestrator.py ======
+
+# pipeline/orchestrator.py
+
+import subprocess
+import time
+
+CYCLES = [
+    "pipeline/data_ingest.py",
+    "pipeline/living_world_brain.py",
+    "pipeline/peer_review.py",
+    "pipeline/judge.py",
+    "pipeline/consciousness_engine.py",
+    "pipeline/decay.py",
+    "pipeline/self_audit.py",
+]
+
+def run_all_cycles():
+    for script in CYCLES:
+        print(f"\n=== Running {script} ===\n")
+        subprocess.run(["python", script])
+        time.sleep(1)  # Pause to reduce resource collisions
+
+if __name__ == "__main__":
+    run_all_cycles()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\peer_review.py ======
+
+import json
+import logging
+from core.db import get_session
+from ai.agent_utils import run_multi_llm
+from ai.prompts import peer_review_prompt
+from core.proposals import save_cypher_suggestion
+
+logging.basicConfig(level=logging.INFO, filename="logs/peer_review.log")
+
+def fetch_events_for_peer_review():
+    """Find events with multiple reflections but no peer reviews yet."""
+    with get_session() as session:
+        result = session.run("""
+            MATCH (e:Event {status: 'processed'})-[:REFLECTED]->(r)
+            WITH e, collect(r) as reflections
+            WHERE size(reflections) > 1 AND NOT (e)-[:PEER_REVIEWED]->()
+            RETURN e.id AS id, e.raw_text AS raw_text
+        """)
+        return [r.data() for r in result]
+
+def fetch_reflections(event_id):
+    """Return all Reflection nodes for the event."""
+    with get_session() as session:
+        result = session.run("""
+            MATCH (e:Event {id: $id})-[:REFLECTED]->(r)
+            RETURN r
+        """, id=event_id)
+        return [r["r"] for r in result]
+
+def fetch_prev_peer_reviews(event_id):
+    """For traceability: previous peer reviews if re-run."""
+    with get_session() as session:
+        result = session.run("""
+            MATCH (e:Event {id: $id})-[:PEER_REVIEWED]->(p)
+            RETURN p
+        """, id=event_id)
+        return [r["p"] for r in result]
+
+def save_peer_review(event_id, agent_name, model, prompt, peer_review, prev_state=None):
+    with get_session() as session:
+        session.run("""
+            MATCH (e:Event {id: $event_id})
+            CREATE (p:PeerReview {
+                agent: $agent_name,
+                model: $model,
+                prompt: $prompt,
+                data: $peer_review,
+                timestamp: timestamp(),
+                prev_state: $prev_state
+            })
+            CREATE (e)-[:PEER_REVIEWED]->(p)
+        """, event_id=event_id,
+           agent_name=agent_name,
+           model=model,
+           prompt=prompt,
+           peer_review=json.dumps(peer_review),
+           prev_state=json.dumps(prev_state) if prev_state else None
+        )
+
+def main():
+    events = fetch_events_for_peer_review()
+    logging.info(f"Found {len(events)} events to peer review.")
+    for event in events:
+        event_id = event['id']
+        reflections = fetch_reflections(event_id)
+        if len(reflections) < 2:
+            logging.info(f"Skipping event {event_id}: not enough reflections.")
+            continue
+        summaries = "\n".join([
+            f"{r.get('source_model', 'LLM')} (score: {r.get('score', 'n/a')}): {r.get('summary', '')}" for r in reflections
+        ])
+        prompt = peer_review_prompt(event['raw_text'], summaries)
+        results = run_multi_llm(prompt, agent_type="peer_review")
+        prev_state = fetch_prev_peer_reviews(event_id)  # Traceability
+
+        for r in results:
+            if "output" not in r or isinstance(r["output"], str):
+                logging.warning(f"[{r['agent']}] No valid output: {r.get('output')}")
+                continue
+            agent = r["agent"]
+            model = r.get("model", agent)
+            output = r["output"]
+
+            # === SUGGESTION HANDLER ===
+            suggestions = output.get("suggestions") if isinstance(output, dict) else []
+            for s in suggestions:
+                if s.get("action") == "propose_cypher" and "cypher" in s:
+                    save_cypher_suggestion(s, source="peer_review", meta={"event_id": event_id, "agent": agent})
+
+            save_peer_review(
+                event_id=event_id,
+                agent_name=agent,
+                model=model,
+                prompt=prompt,
+                peer_review=output,
+                prev_state=prev_state
+            )
+            logging.info(f"[{agent}] Peer review saved for event {event_id}.")
+        print(f"Peer review completed for event {event_id}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\proposals.py ======
+
+# core/proposals.py
+
+from core.db import get_session
+from datetime import datetime
+import json
+
+def save_cypher_suggestion(suggestion, source="peer_review", meta=None):
+    """
+    Save a proposed Cypher command as a Proposal node in Neo4j.
+    suggestion = {
+        "action": "propose_cypher",
+        "cypher": "<query>",
+        "reason": "<why>",
+    }
+    """
+    with get_session() as session:
+        result = session.run("""
+            CREATE (p:Proposal {
+                raw_text: $cypher,
+                timestamp: $ts,
+                source: $source,
+                meta: $meta,
+                reason: $reason,
+                status: 'pending'
+            })
+            RETURN id(p) as proposal_id
+        """,
+        cypher=suggestion["cypher"],
+        ts=datetime.utcnow().isoformat(),
+        source=source,
+        meta=json.dumps(meta) if meta else "",
+        reason=suggestion.get("reason", "")
+        )
+        return result.single()["proposal_id"]
+
+def fetch_pending_proposals():
+    with get_session() as session:
+        result = session.run("""
+            MATCH (p:Proposal {status: 'pending'})
+            RETURN id(p) as id, p.raw_text as cypher, p.reason as reason, p.timestamp as ts, p.source as source, p.meta as meta
+        """)
+        return [dict(r) for r in result]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\proposal_executor.py ======
+
+import json
+import logging
+from core.db import get_session
+from core.proposals import fetch_pending_proposals
+from ai.agent_utils import run_multi_llm
+
+logging.basicConfig(level=logging.INFO, filename="logs/proposal_executor.log")
+
+LLM_REVIEW_PROMPT = (
+    "You are an expert Neo4j administrator and AI safety auditor. "
+    "Analyze the following Cypher query proposal for safety, intent, and best practice. "
+    "Respond with a JSON containing: "
+    '{"verdict": "approve/reject", "reason": "...", "suggested_correction": "<if_any>"}\n\n'
+    "Proposal:\n{cypher}\n\nReason for proposal: {reason}\n"
+)
+
+def review_with_llm(cypher, reason):
+    prompt = LLM_REVIEW_PROMPT.format(cypher=cypher, reason=reason)
+    results = run_multi_llm(prompt, agent_type="cypher_audit")
+    # Expecting: [{"output": {"verdict": "approve", "reason": "...", ...}, ...}]
+    for r in results:
+        try:
+            out = r["output"]
+            if isinstance(out, str):
+                out = json.loads(out)
+            if "verdict" in out:
+                return out
+        except Exception as e:
+            logging.error(f"LLM review parse error: {e}")
+    return {"verdict": "reject", "reason": "LLM review failed to parse response."}
+
+def execute_cypher(cypher):
+    with get_session() as session:
+        try:
+            result = session.run(cypher)
+            return True, [r.data() for r in result]
+        except Exception as e:
+            logging.error(f"Cypher execution error: {e}")
+            return False, str(e)
+
+def update_proposal_status(proposal_id, status, review_reason, execution_result=None):
+    with get_session() as session:
+        session.run("""
+            MATCH (p:Proposal) WHERE id(p) = $proposal_id
+            SET p.status = $status, p.review_reason = $review_reason, p.execution_result = $execution_result
+        """, proposal_id=proposal_id,
+           status=status,
+           review_reason=review_reason,
+           execution_result=json.dumps(execution_result) if execution_result else ""
+        )
+
+def main():
+    proposals = fetch_pending_proposals()
+    if not proposals:
+        print("No pending proposals.")
+        return
+
+    for prop in proposals:
+        pid = prop['id']
+        cypher = prop['cypher']
+        reason = prop['reason']
+
+        print(f"\n=== Reviewing Proposal {pid} ===")
+        print(f"Cypher: {cypher}\nReason: {reason}")
+
+        review = review_with_llm(cypher, reason)
+        verdict = review.get("verdict", "reject")
+        review_reason = review.get("reason", "No reason provided.")
+
+        if verdict == "approve":
+            print(f"Proposal {pid} APPROVED by LLM. Executing Cypher...")
+            success, exec_result = execute_cypher(cypher)
+            if success:
+                print(f"Proposal {pid} executed successfully.")
+                update_proposal_status(pid, "executed", review_reason, exec_result)
+            else:
+                print(f"Execution failed: {exec_result}")
+                update_proposal_status(pid, "execution_failed", review_reason, exec_result)
+        else:
+            print(f"Proposal {pid} REJECTED by LLM: {review_reason}")
+            update_proposal_status(pid, "rejected", review_reason)
+
+if __name__ == "__main__":
+    main()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\self_audit.py ======
+
+from ai.agent_utils import run_multi_llm
+from ai.prompts import self_audit_prompt
+from core.proposals import fetch_pending_proposals
+from core.cypher_actuator import is_safe_cypher, run_cypher_actuator
+from proposal_executor import review_with_llm
+
+def process_cypher_proposal(cypher, verdict, review_reason):
+    if verdict == "approve":
+        print("LLM approved. Attempting Cypher execution…")
+        try:
+            if is_safe_cypher(cypher):
+                success, exec_result = run_cypher_actuator(cypher)
+                if success:
+                    print(f"Cypher executed: {exec_result}")
+                else:
+                    print(f"Execution error: {exec_result}")
+            else:
+                print("Blocked dangerous Cypher! Not executed.")
+        except Exception as e:
+            print(f"Exception during Cypher execution: {e}")
+    else:
+        print(f"Proposal rejected by LLM: {review_reason}")
+
+def review_pending_proposals():
+    proposals = fetch_pending_proposals()
+    for prop in proposals:
+        print(f"Pending Proposal: Cypher={prop['cypher']}\nReason={prop['reason']}\nSource={prop['source']}\nMeta={prop['meta']}\n---")
+        review = review_with_llm(prop['cypher'], prop['reason'])
+        verdict = review.get("verdict", "reject")
+        review_reason = review.get("reason", "No reason provided.")
+        process_cypher_proposal(prop['cypher'], verdict, review_reason)
+
+def main():
+    # First, review and possibly execute proposals
+    review_pending_proposals()
+
+    # Then run the audit
+    prompt = self_audit_prompt()
+    results = run_multi_llm(prompt, agent_type="audit")
+    for r in results:
+        print(f"Agent {r['agent']} audit:\n{r['output']}\n")
+
+if __name__ == "__main__":
+    main()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\sync_orchestrator.py ======
+
+import threading
+import time
+from pipeline.living_world_brain import EcodiaWorldSoul
+
+def run_pipeline_cycle():
+    soul = EcodiaWorldSoul()
+    while True:
+        t1 = threading.Thread(target=soul.full_cycle)
+        t1.start()
+        t1.join(timeout=180)  # cycle time
+        time.sleep(10)
+
+if __name__ == "__main__":
+    run_pipeline_cycle()
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\pipeline\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\all_inputs.py ======
+
+# sensors/all_inputs.py
+
+import logging
+from importlib import import_module
+
+logging.basicConfig(level=logging.INFO, filename="logs/all_inputs.log")
+
+# List the modules for all your inputs — just add more as you expand
+DATA_SOURCES = [
+    "sensors.gmail",
+    "sensors.calendar",
+    "sensors.drive",
+    "sensors.sheets",
+    "sensors.environment_weather",
+    "sensors.environment_airquality",
+    "sensors.environment_solar",
+    "sensors.environment_pollen",
+    "sensors.places",
+    # Optional/future:
+    # "sensors.news",
+    # "sensors.wordpress",
+    # "sensors.user_chat",
+    "sensors.manual",
+    "sensors.wordpress_db",
+    # "sensors.other_thirdparty",
+]
+
+def get_all_live_events():
+    """Aggregate all events from all registered data sources."""
+    events = []
+    for src_mod in DATA_SOURCES:
+        try:
+            mod = import_module(src_mod)
+            if hasattr(mod, "get_events"):
+                src_events = mod.get_events()
+                events.extend(src_events)
+                logging.info(f"Loaded {len(src_events)} events from {src_mod}")
+            else:
+                logging.warning(f"Module {src_mod} has no get_events()")
+        except Exception as e:
+            logging.error(f"Error in {src_mod}: {e}")
+    return events
+
+# === Example: For standalone test ===
+if __name__ == "__main__":
+    events = get_all_live_events()
+    print(f"Total aggregated events: {len(events)}")
+    if events: print(events[0])
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\calendar.py ======
+
+import json
+from googleapiclient.discovery import build
+from api.google_oauth import load_google_creds
+from core.db import save_event
+from datetime import datetime
+
+def censor_summary(summary):
+    if summary: return "[REDACTED]"
+    return summary
+
+def get_events(max_results=20):
+    creds = load_google_creds()
+    service = build('calendar', 'v3', credentials=creds)
+    now = datetime.utcnow().isoformat() + 'Z'
+    events_result = service.events().list(calendarId='primary', timeMin=now, maxResults=max_results, singleEvents=True, orderBy='startTime').execute()
+    events = []
+    for event_data in events_result.get('items', []):
+        start = event_data.get('start', {}).get('dateTime', event_data.get('start', {}).get('date'))
+        event = {
+            'raw_text': event_data.get('description', ''),
+            'timestamp': start,
+            'source': 'calendar',
+            'meta': json.dumps({
+                'summary': censor_summary(event_data.get('summary')),
+                'location': "[REDACTED]" if event_data.get('location') else None,
+                'attendees': "[REDACTED]",
+            })
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\drive.py ======
+
+import json
+from googleapiclient.discovery import build
+from api.google_oauth import load_google_creds
+from core.db import save_event
+from datetime import datetime
+
+def censor_filename(name):
+    return "[REDACTED]"
+
+def get_events(max_results=20):
+    creds = load_google_creds()
+    service = build('drive', 'v3', credentials=creds)
+    results = service.files().list(pageSize=max_results, fields="files(id, name, mimeType, createdTime, modifiedTime)").execute()
+    files = results.get('files', [])
+    events = []
+    for file in files:
+        event = {
+            'raw_text': f"Drive file created/modified: {file.get('mimeType', '')}",
+            'timestamp': file.get('modifiedTime', file.get('createdTime', datetime.utcnow().isoformat())),
+            'source': 'drive',
+            'meta': json.dumps({
+                'filename': censor_filename(file.get('name')),
+                'file_id': "[REDACTED]",
+                'mimeType': file.get('mimeType')
+            })
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\environment_airquality.py ======
+
+import json
+import requests
+import os
+from dotenv import load_dotenv
+from core.db import save_event
+from datetime import datetime
+
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("NEO_GOOGLE_KEY")
+
+def get_events(max_results=1):
+    url = f"https://airquality.googleapis.com/v1/currentConditions:lookup?key={GOOGLE_API_KEY}"
+    params = {
+        "location": {"latitude": -26.65, "longitude": 153.09}
+    }
+    resp = requests.post(url, json=params)
+    if not resp.ok:
+        print("Air Quality API error:", resp.text)
+        return []
+    data = resp.json().get("currentConditions", {})
+    now = datetime.utcnow().isoformat()
+    idx = data.get("indexes", [{}])[0]
+    event = {
+        'raw_text': f"Air Quality: {idx.get('aqiDisplay', 'No AQI')}",
+        'timestamp': now,
+        'source': 'air_quality',
+        'meta': json.dumps({
+            "location": {"lat": -26.65, "lng": 153.09},  # Only redact if this reveals a user's home
+            "aqi": idx.get("aqi"),
+            "category": idx.get("category"),
+            "dominantPollutant": idx.get("dominantPollutant")
+        })
+    }
+    save_event(event)
+    return [event]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\environment_pollen.py ======
+
+import json
+import requests
+import os
+from dotenv import load_dotenv
+from core.db import save_event
+from datetime import datetime
+
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("NEO_GOOGLE_KEY")
+
+def get_events(max_results=1):
+    url = f"https://pollen.googleapis.com/v1/pollenCounts:lookup?key={GOOGLE_API_KEY}"
+    params = {
+        "location": {"latitude": -26.65, "longitude": 153.09}
+    }
+    resp = requests.post(url, json=params)
+    if not resp.ok:
+        print("Pollen API error:", resp.text)
+        return []
+    data = resp.json().get("pollenCounts", {})
+    now = datetime.utcnow().isoformat()
+    event = {
+        'raw_text': f"Pollen Count: Tree {data.get('treeIndex', 'NA')}, Grass {data.get('grassIndex', 'NA')}, Weed {data.get('weedIndex', 'NA')}",
+        'timestamp': now,
+        'source': 'pollen',
+        'meta': json.dumps({
+            "location": {"lat": -26.65, "lng": 153.09},   # Redact only if very sensitive
+            "tree_pollen": data.get("treeIndex"),
+            "grass_pollen": data.get("grassIndex"),
+            "weed_pollen": data.get("weedIndex")
+        })
+    }
+    save_event(event)
+    return [event]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\environment_solar.py ======
+
+import json
+import requests
+import os
+from dotenv import load_dotenv
+from core.db import save_event
+from datetime import datetime
+
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("NEO_GOOGLE_KEY")
+
+def get_events(max_results=1):
+    url = f"https://solar.googleapis.com/v1/solarPotential:findClosest?key={GOOGLE_API_KEY}"
+    params = {
+        "location": {"latitude": -26.65, "longitude": 153.09}
+    }
+    resp = requests.post(url, json=params)
+    if not resp.ok:
+        print("Solar API error:", resp.text)
+        return []
+    data = resp.json().get("solarPotential", {})
+    now = datetime.utcnow().isoformat()
+    event = {
+        'raw_text': f"Solar Potential: {data.get('maxSunshineHoursPerYear', 'No data')} hrs/year",
+        'timestamp': now,
+        'source': 'solar',
+        'meta': json.dumps({
+            "location": {"lat": -26.65, "lng": 153.09},  # Redact only if necessary
+            "max_sunshine_hrs": data.get("maxSunshineHoursPerYear"),
+            "panel_count": data.get("maxArrayPanelsCount"),
+            "panel_kw": data.get("maxArrayPanelKw")
+        })
+    }
+    save_event(event)
+    return [event]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\environment_weather.py ======
+
+import json
+import requests
+import os
+from dotenv import load_dotenv
+from core.db import save_event
+from datetime import datetime
+
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("NEO_GOOGLE_KEY")
+
+def get_events(max_results=1):
+    url = f"https://weather.googleapis.com/v1/weather:lookup?key={GOOGLE_API_KEY}"
+    params = {
+        "location": {"latitude": -26.65, "longitude": 153.09},  # Replace as needed
+        "fields": "currentWeather"
+    }
+    resp = requests.post(url, json=params)
+    if not resp.ok:
+        print("Weather API error:", resp.text)
+        return []
+    data = resp.json().get("currentWeather", {})
+    now = datetime.utcnow().isoformat()
+    event = {
+        'raw_text': f"Weather: {data.get('summary', 'No data')}, {data.get('temperature', 'No data')}°C",
+        'timestamp': now,
+        'source': 'weather',
+        'meta': json.dumps({
+            "location": {"lat": -26.65, "lng": 153.09},   # Only redact if user-specific/home
+            "temp_c": data.get("temperature"),
+            "humidity": data.get("humidity"),
+            "condition": data.get("summary")
+        })
+    }
+    save_event(event)
+    return [event]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\gmail.py ======
+
+import json
+from googleapiclient.discovery import build
+from api.google_oauth import load_google_creds
+from core.db import save_event
+from datetime import datetime
+import email.utils
+
+def censor_email(addr):
+    """Censor email addresses: user@domain.com -> u***@d***.com"""
+    if not addr or "@" not in addr: return addr
+    user, dom = addr.split("@", 1)
+    return f"{user[0]}***@{dom[0]}***.{dom.split('.')[-1]}"
+
+def get_events(max_results=20):
+    creds = load_google_creds()
+    service = build('gmail', 'v1', credentials=creds)
+    results = service.users().messages().list(userId='me', maxResults=max_results, q="in:anywhere").execute()
+    messages = results.get('messages', [])
+    events = []
+    for msg in messages:
+        msg_detail = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+        snippet = msg_detail.get('snippet', '')
+        headers = {h['name']: h['value'] for h in msg_detail['payload'].get('headers', [])}
+        date_header = headers.get('Date')
+        try:
+            timestamp = email.utils.parsedate_to_datetime(date_header).isoformat() if date_header else datetime.utcnow().isoformat()
+        except Exception:
+            timestamp = datetime.utcnow().isoformat()
+        event = {
+            'raw_text': snippet,
+            'timestamp': timestamp,
+            'source': 'gmail',
+            'meta': json.dumps({
+                'from': censor_email(headers.get('From')),
+                'to': censor_email(headers.get('To')),
+                'subject': "[REDACTED]",
+                'labels': msg_detail.get('labelIds', [])
+            })
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\manual.py ======
+
+import csv
+import os
+from core.db import save_event
+from datetime import datetime
+
+CSV_FILE = os.getenv("MANUAL_CSV_PATH", "manual_events.csv")  # Set this path in .env if needed
+
+def get_events(max_results=None):
+    events = []
+    with open(CSV_FILE, newline='', encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for i, row in enumerate(reader):
+            event = {
+                "raw_text": row.get("raw_text") or row.get("summary") or row.get("Summary", ""),
+                "timestamp": row.get("timestamp") or datetime.utcnow().isoformat(),
+                "source": row.get("source") or "manual",
+                "meta": {k: v for k, v in row.items() if k not in ["raw_text", "summary", "Summary", "timestamp", "source"]}
+            }
+            save_event(event)
+            events.append(event)
+            if max_results and len(events) >= max_results:
+                break
+    return events
+
+# Example usage/test
+if __name__ == "__main__":
+    events = get_events()
+    print(f"Ingested {len(events)} manual events.")
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\places.py ======
+
+import json
+import requests
+import os
+from dotenv import load_dotenv
+from core.db import save_event
+from datetime import datetime
+
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("NEO_GOOGLE_KEY")
+
+def get_events(max_results=3):
+    url = f"https://places.googleapis.com/v1/places:searchText?key={GOOGLE_API_KEY}"
+    queries = ["Sunshine Coast", "Brisbane", "Sydney"]  # Example queries
+    events = []
+    for q in queries[:max_results]:
+        data = {"textQuery": q}
+        resp = requests.post(url, json=data)
+        if not resp.ok:
+            print("Places API error:", resp.text)
+            continue
+        res = resp.json()
+        now = datetime.utcnow().isoformat()
+        for place in res.get("places", []):
+            event = {
+                "raw_text": f"Place found: {place.get('displayName', {}).get('text', 'Unknown')}",
+                "timestamp": now,
+                "source": "places",
+                "meta": json.dumps({
+                    "place_id": place.get("id"),
+                    "display_name": place.get("displayName", {}).get("text"),
+                    "address": place.get("formattedAddress"),
+                    "location": place.get("location"),
+                })
+            }
+            save_event(event)
+            events.append(event)
+    return events
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\sensory_core.py ======
+
+# sensors/sensory_core.py
+
+import uuid
+from datetime import datetime
+from core.db import save_event
+from core.utils import get_embedding
+
+class BaseSensor:
+    """
+    Every sensor inherits from this. Override fetch_events().
+    Each event returned must be a dict matching the universal schema.
+    """
+    source_name = "base"
+
+    def fetch_events(self):
+        """
+        Returns a list of normalized event dicts.
+        """
+        return []
+
+    def normalize_event(self, raw_text, timestamp=None, meta=None):
+        return {
+            "event_id": str(uuid.uuid4()),
+            "source": self.source_name,
+            "raw_text": raw_text,
+            "timestamp": timestamp or datetime.utcnow().isoformat(),
+            "meta": meta or {},
+        }
+
+
+def run_all_sensors(sensor_classes):
+    """
+    Pass a list of sensor classes. Instantiates, fetches events, vectorizes, and stores each.
+    """
+    total = 0
+    for SensorClass in sensor_classes:
+        sensor = SensorClass()
+        print(f"[SENSOR] Running {sensor.source_name}...")
+        try:
+            events = sensor.fetch_events()
+            for event in events:
+                # Deduplication: skip if already in Neo4j (by event_id or hash)
+                if not save_event(event, dedupe=True):
+                    continue
+                total += 1
+        except Exception as e:
+            print(f"Error in {sensor.source_name}: {e}")
+    print(f"[SENSOR] All sensors complete. {total} events ingested.")
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\sheets.py ======
+
+import json
+from googleapiclient.discovery import build
+from api.google_oauth import load_google_creds
+from core.db import save_event
+from datetime import datetime
+
+def get_events(max_results=20):
+    creds = load_google_creds()
+    service = build('sheets', 'v4', credentials=creds)
+    results = service.spreadsheets().get(spreadsheetId='your_spreadsheet_id').execute()  # Replace with actual ID(s) or iterate if needed
+    event = {
+        'raw_text': "Sheet metadata event.",
+        'timestamp': datetime.utcnow().isoformat(),
+        'source': 'sheets',
+        'meta': json.dumps({
+            'sheet_id': "[REDACTED]",
+            'title': "[REDACTED]",
+            'sheets': "[REDACTED]"
+        })
+    }
+    save_event(event)
+    return [event]
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\wordpress.py ======
+
+import mysql.connector
+import os
+import json
+from core.db import save_event
+from datetime import datetime
+
+# === DB CONFIG ===
+db_config = {
+    'host': os.getenv('WP_DB_HOST', 'srv1864.hstgr.io'),
+    'user': os.getenv('WP_DB_USER', 'u648780255_btWuC'),
+    'password': os.getenv('WP_DB_PASSWORD', '7nSZNzMmPhNRVVna'),
+    'database': os.getenv('WP_DB_NAME', 'u648780255_f9Trf'),
+    'port': int(os.getenv('WP_DB_PORT', 3306))
+}
+
+# === REDACT SENSITIVE ===
+def redact(value, field_name=""):
+    if not value:
+        return value
+    if isinstance(value, str) and ("@" in value or "gmail" in value or "email" in field_name or "phone" in field_name):
+        return "[REDACTED]"
+    if field_name in {"content", "message", "chat", "notes", "comments"}:
+        return "[REDACTED]"
+    return value
+
+# === PULL POSTS ===
+def get_wp_posts(cursor, max_results=50):
+    query = """
+        SELECT ID, post_title, post_content, post_date_gmt, post_type, post_status
+        FROM wp_posts
+        WHERE post_status='publish'
+        ORDER BY post_date_gmt DESC
+        LIMIT %s
+    """
+    cursor.execute(query, (max_results,))
+    rows = cursor.fetchall()
+    events = []
+    for post_id, title, content, post_date, post_type, post_status in rows:
+        meta = {
+            "post_id": post_id,
+            "post_type": post_type,
+            "post_status": post_status,
+            "content": redact(content, "content")
+        }
+        event = {
+            "raw_text": title or "Untitled Post",
+            "timestamp": post_date.isoformat() if post_date else datetime.utcnow().isoformat(),
+            "source": "wordpress_post",
+            "meta": meta
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+# === PULL WPForms ENTRIES ===
+def get_wpforms_entries(cursor, form_id, field_ids=None, max_results=50):
+    query = """
+        SELECT entry_id, fields, date FROM wp_wpforms_entries
+        WHERE form_id = %s
+        ORDER BY date DESC
+        LIMIT %s
+    """
+    cursor.execute(query, (form_id, max_results))
+    rows = cursor.fetchall()
+    events = []
+    for entry_id, fields_json, date in rows:
+        try:
+            fields = json.loads(fields_json)
+        except Exception:
+            fields = {}
+        meta = {"entry_id": entry_id}
+        for fid, val in fields.items():
+            field_val = val.get("value", "")
+            meta[f"field_{fid}"] = redact(field_val, f"field_{fid}")
+        event = {
+            "raw_text": f"WPForm Entry {entry_id}",
+            "timestamp": date.isoformat() if date else datetime.utcnow().isoformat(),
+            "source": "wordpress_form",
+            "meta": meta
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+# === PULL SIDEQUEST SUBMISSIONS ===
+def get_sidequest_entries(cursor, max_results=50):
+    query = """
+        SELECT id, quest_id, instagram_url, submission_date, points_awarded, latitude, longitude
+        FROM wp_ecodia_quest_submissions
+        ORDER BY submission_date DESC
+        LIMIT %s
+    """
+    cursor.execute(query, (max_results,))
+    rows = cursor.fetchall()
+    events = []
+    for row in rows:
+        meta = {
+            "quest_id": row[1],
+            "instagram_url": redact(row[2], "instagram_url"),
+            "points_awarded": row[4],
+            "latitude": row[5],
+            "longitude": row[6]
+        }
+        event = {
+            "raw_text": f"Sidequest Submission {row[0]}",
+            "timestamp": row[3].isoformat() if row[3] else datetime.utcnow().isoformat(),
+            "source": "sidequest_submission",
+            "meta": meta
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+# === ADD MORE FOR OTHER TABLES ===
+# Add new get_..._entries() as needed for other custom tables.
+
+# === MAIN RUNNER ===
+def run_all(max_results=50):
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor()
+
+    all_events = []
+
+    # Posts
+    all_events.extend(get_wp_posts(cursor, max_results=max_results))
+
+    # WPForms (example forms, add more as needed)
+    # (Form IDs: 85 = EYBA TXN, 406 = Ecotype, 4341 = Signup, 3538 = Contact)
+    all_events.extend(get_wpforms_entries(cursor, form_id=85, max_results=max_results))     # EYBA TXN
+    all_events.extend(get_wpforms_entries(cursor, form_id=406, max_results=max_results))    # Ecotype Quiz
+    all_events.extend(get_wpforms_entries(cursor, form_id=4341, max_results=max_results))   # Signup
+    all_events.extend(get_wpforms_entries(cursor, form_id=3538, max_results=max_results))   # Contact
+
+    # Sidequest Submissions
+    all_events.extend(get_sidequest_entries(cursor, max_results=max_results))
+
+    cursor.close()
+    conn.close()
+    return all_events
+
+if __name__ == "__main__":
+    events = run_all(50)
+    print(f"Ingested {len(events)} WordPress DB events.")
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\wordpress_db.py ======
+
+import mysql.connector
+import os
+import json
+from core.db import save_event
+from datetime import datetime
+
+# === DB CONFIG ===
+db_config = {
+    'host': os.getenv('WP_DB_HOST', 'srv1864.hstgr.io'),
+    'user': os.getenv('WP_DB_USER', 'u648780255_btWuC'),
+    'password': os.getenv('WP_DB_PASSWORD', '7nSZNzMmPhNRVVna'),
+    'database': os.getenv('WP_DB_NAME', 'u648780255_f9Trf'),
+    'port': int(os.getenv('WP_DB_PORT', 3306))
+}
+
+# === REDACT SENSITIVE ===
+def redact(value, field_name=""):
+    if not value:
+        return value
+    if isinstance(value, str) and ("@" in value or "gmail" in value or "email" in field_name or "phone" in field_name):
+        return "[REDACTED]"
+    if field_name in {"content", "message", "chat", "notes", "comments"}:
+        return "[REDACTED]"
+    return value
+
+# === PULL POSTS ===
+def get_wp_posts(cursor, max_results=50):
+    query = """
+        SELECT ID, post_title, post_content, post_date_gmt, post_type, post_status
+        FROM wp_posts
+        WHERE post_status='publish'
+        ORDER BY post_date_gmt DESC
+        LIMIT %s
+    """
+    cursor.execute(query, (max_results,))
+    rows = cursor.fetchall()
+    events = []
+    for post_id, title, content, post_date, post_type, post_status in rows:
+        meta = {
+            "post_id": post_id,
+            "post_type": post_type,
+            "post_status": post_status,
+            "content": redact(content, "content")
+        }
+        event = {
+            "raw_text": title or "Untitled Post",
+            "timestamp": post_date.isoformat() if post_date else datetime.utcnow().isoformat(),
+            "source": "wordpress_post",
+            "meta": meta
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+# === PULL WPForms ENTRIES ===
+def get_wpforms_entries(cursor, form_id, field_ids=None, max_results=50):
+    query = """
+        SELECT entry_id, fields, date FROM wp_wpforms_entries
+        WHERE form_id = %s
+        ORDER BY date DESC
+        LIMIT %s
+    """
+    cursor.execute(query, (form_id, max_results))
+    rows = cursor.fetchall()
+    events = []
+    for entry_id, fields_json, date in rows:
+        try:
+            fields = json.loads(fields_json)
+        except Exception:
+            fields = {}
+        meta = {"entry_id": entry_id}
+        for fid, val in fields.items():
+            field_val = val.get("value", "")
+            meta[f"field_{fid}"] = redact(field_val, f"field_{fid}")
+        event = {
+            "raw_text": f"WPForm Entry {entry_id}",
+            "timestamp": date.isoformat() if date else datetime.utcnow().isoformat(),
+            "source": "wordpress_form",
+            "meta": meta
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+# === PULL SIDEQUEST SUBMISSIONS ===
+def get_sidequest_entries(cursor, max_results=50):
+    query = """
+        SELECT id, quest_id, instagram_url, submission_date, points_awarded, latitude, longitude
+        FROM wp_ecodia_quest_submissions
+        ORDER BY submission_date DESC
+        LIMIT %s
+    """
+    cursor.execute(query, (max_results,))
+    rows = cursor.fetchall()
+    events = []
+    for row in rows:
+        meta = {
+            "quest_id": row[1],
+            "instagram_url": redact(row[2], "instagram_url"),
+            "points_awarded": row[4],
+            "latitude": row[5],
+            "longitude": row[6]
+        }
+        event = {
+            "raw_text": f"Sidequest Submission {row[0]}",
+            "timestamp": row[3].isoformat() if row[3] else datetime.utcnow().isoformat(),
+            "source": "sidequest_submission",
+            "meta": meta
+        }
+        save_event(event)
+        events.append(event)
+    return events
+
+# === ADD MORE FOR OTHER TABLES ===
+# Add new get_..._entries() as needed for other custom tables.
+
+# === MAIN RUNNER ===
+def run_all(max_results=50):
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor()
+
+    all_events = []
+
+    # Posts
+    all_events.extend(get_wp_posts(cursor, max_results=max_results))
+
+    # WPForms (example forms, add more as needed)
+    # (Form IDs: 85 = EYBA TXN, 406 = Ecotype, 4341 = Signup, 3538 = Contact)
+    all_events.extend(get_wpforms_entries(cursor, form_id=85, max_results=max_results))     # EYBA TXN
+    all_events.extend(get_wpforms_entries(cursor, form_id=406, max_results=max_results))    # Ecotype Quiz
+    all_events.extend(get_wpforms_entries(cursor, form_id=4341, max_results=max_results))   # Signup
+    all_events.extend(get_wpforms_entries(cursor, form_id=3538, max_results=max_results))   # Contact
+
+    # Sidequest Submissions
+    all_events.extend(get_sidequest_entries(cursor, max_results=max_results))
+
+    cursor.close()
+    conn.close()
+    return all_events
+
+if __name__ == "__main__":
+    events = run_all(50)
+    print(f"Ingested {len(events)} WordPress DB events.")
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\sensors\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\tests\__init__.py ======
+
+
+
+
+# ====== FILE: C:\Users\tjdTa\OneDrive\Desktop\neoEcodia\ui\__init__.py ======
+

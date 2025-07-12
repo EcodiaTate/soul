@@ -23,12 +23,8 @@ app.config["SECRET_KEY"] = os.environ.get("API_SECRET", "change_this_123")
 app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET", "super-secret")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=2)
 
-CORS(app, origins=[
-    "https://ecodia.au",                  # your public domain
-    "https://www.ecodia.au",              # just in case people use the www version
-    "https://voice-5u6x.onrender.com",    # the Render subdomain (for preview, staging, testing)
-    "http://localhost:3000",              # local dev, optional
-], supports_credentials=True)
+CORS(app)  # Defaults to allow all origins
+
 
 jwt = JWTManager(app)
 socketio = SocketIO(app, cors_allowed_origins="*")

@@ -269,5 +269,5 @@ from api.google_oauth import bp as google_auth_bp
 app.register_blueprint(google_auth_bp)
 
 if __name__ == "__main__":
-    print("API started on http://localhost:5001")
-    socketio.run(app, host="0.0.0.0", port=5001, debug=True, allow_unsafe_werkzeug=True)
+    debug = os.environ.get("FLASK_DEBUG", "1") == "1"
+    socketio.run(app, host="0.0.0.0", port=5001, debug=debug)

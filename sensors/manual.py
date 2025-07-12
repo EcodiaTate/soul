@@ -10,11 +10,18 @@ def get_events(max_results=None):
     with open(CSV_FILE, newline='', encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for i, row in enumerate(reader):
+            # Get and parse labels from CSV, always include "unprocessed"
+            csv_labels = row.get("labels", "")
+            label_list = [lbl.strip() for lbl in csv_labels.split(",") if lbl.strip()] if csv_labels else []
+            if "unprocessed" not in label_list:
+                label_list.append("unprocessed")
+
             event = {
                 "raw_text": row.get("raw_text") or row.get("summary") or row.get("Summary", ""),
                 "timestamp": row.get("timestamp") or datetime.utcnow().isoformat(),
                 "source": row.get("source") or "manual",
-                "meta": {k: v for k, v in row.items() if k not in ["raw_text", "summary", "Summary", "timestamp", "source"]}
+                "_labels": label_list,
+                "meta": {k: v for k, v in row.items() if k not in ["raw_text", "summary", "Summary", "timestamp", "source", "labels"]}
             }
             save_event(event)
             events.append(event)

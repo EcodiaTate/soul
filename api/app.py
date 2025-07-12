@@ -23,7 +23,7 @@ app.config["SECRET_KEY"] = os.environ.get("API_SECRET", "change_this_123")
 app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET", "super-secret")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=2)
 
-CORS(app, supports_credentials=True)
+CORS(app, origins=["https://ecodia.au", "https://www.ecodia.au"], supports_credentials=True)
 jwt = JWTManager(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 

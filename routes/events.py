@@ -4,7 +4,6 @@ from config import settings
 from neo4j import GraphDatabase
 from core.agents import gpt_agent_process, gemini_agent_process, claude_agent_process
 import uuid
-
 events_bp = Blueprint('events', __name__)
 driver = GraphDatabase.driver(
     settings.NEO4J_URI, 

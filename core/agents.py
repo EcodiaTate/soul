@@ -1,14 +1,15 @@
+
 import os
 import google.generativeai as genai
 
-# ✅ Configure Gemini with API key and correct API version
+# ✅ Works with google-generativeai >= 0.5.4
 genai.configure(
     api_key=os.getenv("GEMINI_API_KEY"),
-    api_version="v1"  # Must be explicitly set for gemini-pro
+    api_version="v1"
 )
 
-# ✅ Initialize Gemini model
-gemini_model = genai.GenerativeModel("gemini-pro")
+gemini_model = genai.GenerativeModel("gemini-1.5-pro")
+
 
 def gemini_agent_process(text):
     try:

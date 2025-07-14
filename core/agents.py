@@ -1,8 +1,11 @@
 import os
 from openai import OpenAI
-# Initialize OpenAI client with your API key
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-print("Loaded OpenAI key:", os.getenv("OPENAI_API_KEY")[:10], "...")
+
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    organization=None,  # or os.getenv("OPENAI_ORG_ID")
+    base_url="https://api.openai.com/v1"  # default
+)
 
 def gpt_agent_process(text):
     response = client.chat.completions.create(

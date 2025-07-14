@@ -1,17 +1,6 @@
-"""
-/core/socket_handlers.py
-
-Real-Time Socket Handlers for Timeline, Event, Chat, Agent, and Audit Updates.
-- Emits all real-time state changes via Flask-SocketIO to the frontend.
-- Integrate by calling these emitters after new data is created/updated in the system.
-
-Collaborators:
-    - app.py (registers and shares socketio instance)
-    - timeline_engine.py, events.py, agents.py, meta_audit.py, consensus_engine.py
-    - Frontend: listens on 'timeline_update', 'event_update', 'chat_response', etc.
-"""
-
 from flask_socketio import SocketIO
+from app import socketio
+from flask import current_app
 
 # Import the main socketio instance from app.py (adjust path if needed)
 try:
@@ -19,6 +8,11 @@ try:
 except ImportError:
     socketio = None  # To avoid IDE errors during early dev
 
+def emit_dream_update(dream_obj):
+    # Import socketio from the app context to avoid circular imports
+    from app import socketio
+    socketio.emit('dream_update', dream_obj, namespace='/')
+    
 def emit_timeline_update(entry):
     """
     Emit 'timeline_update' to all subscribed clients when a new TimelineEntry is created.
@@ -40,6 +34,10 @@ def emit_chat_response(msg_obj):
     """
     if socketio:
         socketio.emit('chat_response', msg_obj, namespace="/")
+
+def emit_dream_update(dream_obj):
+    
+    socketio.emit('dream_update', dream_obj, namespace='/')
 
 def emit_agent_state(agent_id, state):
     """

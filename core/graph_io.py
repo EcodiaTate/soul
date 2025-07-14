@@ -47,15 +47,32 @@ def create_node(label, properties):
         record = result.single()
         return dict(record["n"]) if record else safe_props
 
-def embed_vector_in_node(node_id, vector):
-    # Update an existing node with a new embedding/vector field
+def query_nodes(filter_dict=None, sort_by=None, desc=False):
+    """
+    Return a list of nodes matching label/properties, sorted.
+    filter_dict: {label: 'Dream', <prop>: <value>}
+    """
+    filter_dict = filter_dict or {}
+    label = filter_dict.get('label', '')
+    filters = [f"n.{k} = ${k}" for k in filter_dict if k != 'label']
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ''
+    order = f"ORDER BY n.{sort_by} {'DESC' if desc else 'ASC'}" if sort_by else ''
+    cypher = f"MATCH (n{':' + label if label else ''}) {where_clause} RETURN n {order}"
     with driver.session() as session:
-        session.run(
-            "MATCH (n) WHERE n.id = $id SET n.embedding = $vector",
-            id=node_id,
-            vector=vector
-        )
-# /core/graph_io.py
+        result = session.run(cypher, {k: v for k, v in filter_dict.items() if k != 'label'})
+        return [dict(record["n"]) for record in result]
+
+def embed_vector_in_node(node_id, raw_text):
+    # Dummy vectorizer for now. Replace with real embedding logic as you have in event.
+    # If you use OpenAI, call OpenAI embedding here.
+    # If node_id provided, update; else, just return the vector.
+    fake_vector = [0.0] * 1536  # Adjust dimension as needed
+    if node_id:
+        with driver.session() as session:
+            session.run("MATCH (n) WHERE n.id = $id SET n.embedding = $vector",
+                        id=node_id, vector=fake_vector)
+    return fake_vector
+
 
 def create_relationship(source_id, target_id, rel_type, properties=None):
     """

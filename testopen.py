@@ -1,21 +1,11 @@
-# routes/test.py
-import os
 import openai
-from flask import Blueprint, jsonify
+from dotenv import load_dotenv
+load_dotenv()  # By default, loads .env from current working dir
 
-bp = Blueprint("test", __name__)
+client = openai.OpenAI(api_key="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")
 
-@bp.route("/api/test-openai", methods=["GET"])
-def test_openai():
-    try:
-        # New client interface (>=1.0.0)
-        client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        models = client.models.list()
-
-        return jsonify({
-            "status": "ok",
-            "models": [m.id for m in models.data]
-        })
-    except Exception as e:
-        print("🔥 OpenAI test failed:", repr(e))
-        return jsonify({"status": "error", "message": str(e)}), 500
+try:
+    result = client.embeddings.create(input=["Hello world!"], model="text-embedding-ada-002")
+    print("Result:", result)
+except Exception as e:
+    print("Error:", e)

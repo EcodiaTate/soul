@@ -1,12 +1,10 @@
-# /routes/chat.py
-
 from flask import Blueprint, request, jsonify
 from core import (
     graph_io, context_engine, agents, consensus_engine,
     peer_review_engine, memory_engine, actuators, socket_handlers
 )
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -22,7 +20,7 @@ def submit_chat():
 
     # Step 1: Create Event node
     event_id = str(uuid4())
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     event_node = graph_io.create_node("Event", {
         "id": event_id,
         "raw_text": raw_text,
@@ -44,26 +42,34 @@ def submit_chat():
         agent_responses.append(response)
         graph_io.create_node("Rationale", response)
 
-    # Step 4: Consensus or Peer Review
-    consensus = {}
-    if consensus_engine.check_alignment(agent_responses):
-        consensus = consensus_engine.build_consensus(agent_responses)
-        graph_io.write_consensus_to_graph(consensus)
-        if consensus.get("action_plan"):
-            actuators.dispatch_actuator(consensus["action_plan"])
+    # Step 4: Consensus or Peer Review (pipeline does both)
+    pipeline_result = consensus_engine.consensus_pipeline(event_id, agent_responses)
+
+    # Optionally handle action plans (for actuators)
+    if pipeline_result.get("status") == "consensus":
+        node = pipeline_result.get("node", {})
+        if node.get("action_plan"):
+            actuators.dispatch_actuator(node["action_plan"])
+
+    # Choose rationale summary for UI
+    if pipeline_result.get("status") == "consensus":
+        rationale_summary = pipeline_result.get("node", {}).get("rationale")
+    elif pipeline_result.get("status") == "peer_review":
+        rationale_summary = "Under peer review—awaiting consensus."
     else:
-        peer_review_engine.resolve_or_escalate(agent_responses)
+        rationale_summary = "No consensus reached."
 
     # Step 5: Memory Evaluation
     memory_engine.evaluate_event(event_id)
 
     # Step 6: Emit to Frontend (safe fallback if no consensus/rationale)
-    rationale_summary = consensus.get("rationale") or "Awaiting peer review or system response."
     socket_handlers.emit_new_event({"id": event_id, "text": raw_text})
     socket_handlers.emit_chat_response({"summary": rationale_summary, "id": event_id})
 
+    # Step 7: Return everything
     return jsonify({
         "status": "ok",
         "event_id": event_id,
+        "pipeline_result": pipeline_result,
         "summary": rationale_summary
     })

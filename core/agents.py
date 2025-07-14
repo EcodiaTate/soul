@@ -1,18 +1,26 @@
 import os
 import google.generativeai as genai
+from dotenv import load_dotenv
+load_dotenv()
 
-# ✅ Works with google-generativeai >= 0.5.4
-genai.configure(
-    api_key=os.getenv("GEMINI_API_KEY"),
-)
-
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 gemini_model = genai.GenerativeModel("gemini-1.5-pro")
 
-
-def gemini_agent_process(text):
+def gemini_agent_process(text, context_blocks=None):
+    # Join context blocks if provided
+    context_prompt = ""
+    if context_blocks:
+        context_prompt = "\n\n".join(
+            [f"[Memory]\nSummary: {b.get('summary','')}\nKey Insight: {b.get('key_insight','')}" for b in context_blocks]
+        )
+    full_prompt = (
+        "You are an internal agent reflecting on system events.\n\n"
+        + (f"System context:\n{context_prompt}\n\n" if context_prompt else "")
+        + f"Process this event: {text}"
+    )
     try:
         response = gemini_model.generate_content(
-            [f"You are an internal agent reflecting on system events.\n\nProcess this event: {text}"],
+            [full_prompt],
             generation_config={
                 "temperature": 0.7,
                 "top_p": 1,
@@ -21,33 +29,28 @@ def gemini_agent_process(text):
             }
         )
         content = response.text.strip()
-        return {
-            "rationale": content,
-            "mood": "curious",
-        }
+        print(f"[Gemini Agent] Input: {full_prompt[:200]}...\n[Gemini Agent] Output: {content[:200]}...")
+        return {"rationale": content, "mood": "curious"}
     except Exception as e:
-        print("Gemini error:", e)
-        return {
-            "rationale": f"[Gemini ERROR] Could not process: {e}",
-            "mood": "confused"
-        }
+        print("[Gemini Agent ERROR]:", e)
+        return {"rationale": f"[Gemini ERROR] Could not process: {e}", "mood": "confused"}
 
-# Placeholder for Claude (non-functional in this slice)
-def claude_agent_process(text):
+def claude_agent_process(text, context_blocks=None):
+    # Context not used in stub, but included for future consistency
+    print(f"[Claude Agent] Input: {text[:100]}...")
     return {
         "rationale": f"[Claude] Interpretation: '{text}' may influence future state.",
         "mood": "analytical"
     }
 
-# ✅ Temporarily map GPT agent to Gemini during this slice
-def gpt_agent_process(text):
-    return gemini_agent_process(text)
-
-
-# ----- MISSING FUNCTIONS FOR AGENT LOOP -----
+def gpt_agent_process(text, context_blocks=None):
+    # Reuse Gemini for now
+    return gemini_agent_process(text, context_blocks)
 
 def load_agents():
-    # Each agent dict can specify an id, name, and the function to call
+    """
+    Returns a list of agent configs, each with id, name, and processing fn.
+    """
     return [
         {"id": "gpt", "name": "GPT", "fn": gpt_agent_process},
         {"id": "claude", "name": "Claude", "fn": claude_agent_process},
@@ -55,13 +58,17 @@ def load_agents():
     ]
 
 def process_event(agent, context, event):
-    # context and event are available, but for now just send the raw_text to the agent's function
+    """
+    Pass event and context to the agent's processing fn.
+    Logs and returns standardized agent output dict.
+    """
     text = event.get("raw_text", "")
-    agent_response = agent["fn"](text)
-    # Return in the standard system format
-    return {
+    agent_response = agent["fn"](text, context)
+    result = {
         "agent_name": agent["name"],
         "rationale": agent_response["rationale"],
         "mood": agent_response.get("mood", "neutral"),
-        "score": 1.0,  # stub
+        "score": 1.0,  # stub for now
     }
+    print(f"[{agent['name']} Result] {result['rationale'][:200]}...\n")
+    return result

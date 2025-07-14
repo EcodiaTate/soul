@@ -1,8 +1,12 @@
 import os
 from flask import Flask, jsonify
+from routes.events import events_bp  # ✅ Import the events blueprint
 
 def create_app():
     app = Flask(__name__)
+
+    # ✅ Register API routes
+    app.register_blueprint(events_bp)
 
     @app.route("/api/ping")
     def ping():

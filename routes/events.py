@@ -31,7 +31,7 @@ def create_event():
 
     # 3. Determine consensus (basic logic for now)
     rationales = [gpt_output["rationale"], gemini_output["rationale"], claude_output["rationale"]]
-    consensus = gpt_output["rationale"] if len(set(rationales)) == 1 else None
+    consensus = gemini_output["rationale"] if len(set(rationales)) == 1 else None
     status = "consensus" if consensus else "needs_review"
 
     # 4. Update the event node with all 3 outputs

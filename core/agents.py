@@ -1,34 +1,42 @@
 import os
-from openai import OpenAI
+import google.generativeai as genai
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    organization=None,  # or os.getenv("OPENAI_ORG_ID")
-    base_url="https://api.openai.com/v1"  # default
-)
+# Configure Gemini with API key from .env
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-def gpt_agent_process(text):
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are an internal agent reflecting on system events."},
-            {"role": "user", "content": f"Process this event: {text}"}
-        ]
-    )
-    content = response.choices[0].message.content.strip()
-    return {
-        "rationale": content,
-        "mood": "reflective"
-    }
+# Initialize Gemini model
+gemini_model = genai.GenerativeModel("gemini-pro")
 
 def gemini_agent_process(text):
-    return {
-        "rationale": f"[Gemini] Insight: '{text}' seems meaningful.",
-        "mood": "curious"
-    }
+    try:
+        response = gemini_model.generate_content(
+            [f"You are an internal agent reflecting on system events.\n\nProcess this event: {text}"],
+            generation_config={
+                "temperature": 0.7,
+                "top_p": 1,
+                "top_k": 40,
+                "max_output_tokens": 1024
+            }
+        )
+        content = response.text.strip()
+        return {
+            "rationale": content,
+            "mood": "curious"
+        }
+    except Exception as e:
+        print("Gemini error:", e)
+        return {
+            "rationale": f"[Gemini ERROR] Could not process: {e}",
+            "mood": "confused"
+        }
 
+# Placeholder for Claude
 def claude_agent_process(text):
     return {
         "rationale": f"[Claude] Interpretation: '{text}' may influence future state.",
         "mood": "analytical"
     }
+
+# Redirect legacy GPT call to Gemini during this slice
+def gpt_agent_process(text):
+    return gemini_agent_process(text)

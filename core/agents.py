@@ -1,10 +1,13 @@
 import os
 import google.generativeai as genai
 
-# Configure Gemini with API key from .env
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# ✅ Configure Gemini with API key and correct API version
+genai.configure(
+    api_key=os.getenv("GEMINI_API_KEY"),
+    api_version="v1"  # Must be explicitly set for gemini-pro
+)
 
-# Initialize Gemini model
+# ✅ Initialize Gemini model
 gemini_model = genai.GenerativeModel("gemini-pro")
 
 def gemini_agent_process(text):
@@ -30,13 +33,13 @@ def gemini_agent_process(text):
             "mood": "confused"
         }
 
-# Placeholder for Claude
+# Placeholder for Claude (non-functional in this slice)
 def claude_agent_process(text):
     return {
         "rationale": f"[Claude] Interpretation: '{text}' may influence future state.",
         "mood": "analytical"
     }
 
-# Redirect legacy GPT call to Gemini during this slice
+# ✅ Temporarily map GPT agent to Gemini during this slice
 def gpt_agent_process(text):
     return gemini_agent_process(text)

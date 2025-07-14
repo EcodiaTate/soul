@@ -2,7 +2,7 @@
 import requests
 import time
 
-BASE = "http://localhost:5000"
+BASE = "https://ecodia.au"
 
 def post_event(text):
     res = requests.post(f"{BASE}/api/event", json={"text": text})

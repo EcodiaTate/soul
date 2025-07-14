@@ -1,3 +1,4 @@
+flask-jwt-extended
 neo4j
 Flask
 gunicorn

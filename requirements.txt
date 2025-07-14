@@ -3,3 +3,7 @@ Flask
 gunicorn
 eventlet>=0.24.1
 python-dotenv
+openai
+flask-socketio
+requests
+flask-cors

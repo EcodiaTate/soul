@@ -3,6 +3,7 @@ from openai import OpenAI
 
 # Initialize OpenAI client with your API key
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+print("Loaded OpenAI key:", os.getenv("OPENAI_API_KEY")[:10], "...")
 
 def gpt_agent_process(text):
     response = client.chat.completions.create(

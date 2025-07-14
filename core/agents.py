@@ -1,11 +1,11 @@
-# core/agents.py
-import openai
 import os
+from openai import OpenAI
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Initialize OpenAI client with your API key
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def gpt_agent_process(text):
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are an internal agent reflecting on system events."},
@@ -17,6 +17,7 @@ def gpt_agent_process(text):
         "rationale": content,
         "mood": "reflective"
     }
+
 def gemini_agent_process(text):
     return {
         "rationale": f"[Gemini] Insight: '{text}' seems meaningful.",

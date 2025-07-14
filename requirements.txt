@@ -1,7 +1,7 @@
 neo4j
 Flask
 gunicorn
-eventlet>=0.24.1
+gevent
 python-dotenv
 openai
 flask-socketio

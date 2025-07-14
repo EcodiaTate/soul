@@ -1,4 +1,3 @@
-
 import os
 import google.generativeai as genai
 
@@ -24,7 +23,7 @@ def gemini_agent_process(text):
         content = response.text.strip()
         return {
             "rationale": content,
-            "mood": "curious"
+            "mood": "curious",
         }
     except Exception as e:
         print("Gemini error:", e)
@@ -43,3 +42,26 @@ def claude_agent_process(text):
 # ✅ Temporarily map GPT agent to Gemini during this slice
 def gpt_agent_process(text):
     return gemini_agent_process(text)
+
+
+# ----- MISSING FUNCTIONS FOR AGENT LOOP -----
+
+def load_agents():
+    # Each agent dict can specify an id, name, and the function to call
+    return [
+        {"id": "gpt", "name": "GPT", "fn": gpt_agent_process},
+        {"id": "claude", "name": "Claude", "fn": claude_agent_process},
+        {"id": "gemini", "name": "Gemini", "fn": gemini_agent_process},
+    ]
+
+def process_event(agent, context, event):
+    # context and event are available, but for now just send the raw_text to the agent's function
+    text = event.get("raw_text", "")
+    agent_response = agent["fn"](text)
+    # Return in the standard system format
+    return {
+        "agent_name": agent["name"],
+        "rationale": agent_response["rationale"],
+        "mood": agent_response.get("mood", "neutral"),
+        "score": 1.0,  # stub
+    }

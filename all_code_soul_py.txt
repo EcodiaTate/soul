@@ -1,0 +1,1086 @@
+
+
+### FILE: app.py
+
+import os
+from flask import Flask, jsonify
+from flask_cors import CORS
+from flask_socketio import SocketIO
+from flask_jwt_extended import JWTManager
+from dotenv import load_dotenv
+
+# Load .env
+load_dotenv()
+
+# Flask setup
+def create_app():
+    app = Flask(__name__)
+    CORS(app, supports_credentials=True, origins=[
+        os.environ.get("FRONTEND_URL", "http://localhost:5173"),
+        "http://localhost:5173"
+    ])
+    # Set Flask/JWT config
+    app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY", "supersecret")
+    app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET", "jwtsecret")
+
+    # Register Blueprints
+    from routes.events import events_bp
+    from routes.chat import chat_bp
+    from routes.timeline import timeline_bp
+    # Add others as you expand (e.g. agents_bp, dreams_bp, auth_bp)
+    import routes.test  # If you have a 'test' blueprint
+
+    app.register_blueprint(events_bp)
+    app.register_blueprint(chat_bp)
+    app.register_blueprint(timeline_bp)
+    app.register_blueprint(routes.test.bp)
+
+    # JWT
+    jwt = JWTManager(app)
+
+    # Health check
+    @app.route("/api/ping")
+    def ping():
+        return jsonify({"status": "ok"})
+
+    return app
+
+# SocketIO setup (must be global for import in core/socket_handlers.py)
+socketio = SocketIO(cors_allowed_origins="*")  # Allow all for dev; restrict in prod
+
+app = create_app()
+socketio.init_app(app, async_mode="eventlet")
+
+# Optionally: Start background jobs here
+# from core.memory_engine import run_decay_cycle
+# socketio.start_background_task(run_decay_cycle)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host="0.0.0.0", port=port)
+
+
+### FILE: collate.py
+
+import os
+
+def collate_py_files(root_folder, output_file):
+    with open(output_file, 'w', encoding='utf-8') as out:
+        for dirpath, _, filenames in os.walk(root_folder):
+            for fname in filenames:
+                if fname.endswith('.py'):
+                    rel_path = os.path.relpath(os.path.join(dirpath, fname), root_folder)
+                    out.write(f"\n\n### FILE: {rel_path}\n\n")
+                    try:
+                        with open(os.path.join(dirpath, fname), 'r', encoding='utf-8') as f:
+                            out.write(f.read())
+                    except Exception as e:
+                        out.write(f"\n[ERROR reading {rel_path}: {e}]\n")
+
+if __name__ == "__main__":
+    collate_py_files("soul", "all_code_soul_py.txt")
+    print("Collated all .py files in 'soul/' into all_code_soul_py.txt")
+
+
+### FILE: collate_soul.py
+
+import os
+
+OUTPUT_FILE = "all_code_soul_py.txt"
+
+with open(OUTPUT_FILE, "w", encoding="utf-8") as out:
+    for dirpath, _, filenames in os.walk("."):
+        for fname in filenames:
+            if fname.endswith('.py'):
+                rel_path = os.path.relpath(os.path.join(dirpath, fname), ".")
+                out.write(f"\n\n### FILE: {rel_path}\n\n")
+                try:
+                    with open(os.path.join(dirpath, fname), "r", encoding="utf-8") as f:
+                        out.write(f.read())
+                except Exception as e:
+                    out.write(f"\n[ERROR reading {rel_path}: {e}]\n")
+
+print(f"Collated all .py files into {OUTPUT_FILE}")
+
+
+### FILE: wsgi.py
+
+from app import create_app, socketio
+
+app = create_app()
+application = app
+
+
+### FILE: config\settings.py
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Neo4j
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
+NEO4J_PASS = os.getenv("NEO4J_PASS")
+
+# OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Any other keys go here...
+
+
+### FILE: core\actuators.py
+
+
+
+### FILE: core\agents.py
+
+import os
+import google.generativeai as genai
+from dotenv import load_dotenv
+load_dotenv()
+
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_model = genai.GenerativeModel("gemini-1.5-pro")
+
+def gemini_agent_process(text, context_blocks=None):
+    # Join context blocks if provided
+    context_prompt = ""
+    if context_blocks:
+        context_prompt = "\n\n".join(
+            [f"[Memory]\nSummary: {b.get('summary','')}\nKey Insight: {b.get('key_insight','')}" for b in context_blocks]
+        )
+    full_prompt = (
+        "You are an internal agent reflecting on system events.\n\n"
+        + (f"System context:\n{context_prompt}\n\n" if context_prompt else "")
+        + f"Process this event: {text}"
+    )
+    try:
+        response = gemini_model.generate_content(
+            [full_prompt],
+            generation_config={
+                "temperature": 0.7,
+                "top_p": 1,
+                "top_k": 40,
+                "max_output_tokens": 1024
+            }
+        )
+        content = response.text.strip()
+        print(f"[Gemini Agent] Input: {full_prompt[:200]}...\n[Gemini Agent] Output: {content[:200]}...")
+        return {"rationale": content, "mood": "curious"}
+    except Exception as e:
+        print("[Gemini Agent ERROR]:", e)
+        return {"rationale": f"[Gemini ERROR] Could not process: {e}", "mood": "confused"}
+
+def claude_agent_process(text, context_blocks=None):
+    # Context not used in stub, but included for future consistency
+    print(f"[Claude Agent] Input: {text[:100]}...")
+    return {
+        "rationale": f"[Claude] Interpretation: '{text}' may influence future state.",
+        "mood": "analytical"
+    }
+
+def gpt_agent_process(text, context_blocks=None):
+    # Reuse Gemini for now
+    return gemini_agent_process(text, context_blocks)
+
+def load_agents():
+    """
+    Returns a list of agent configs, each with id, name, and processing fn.
+    """
+    return [
+        {"id": "gpt", "name": "GPT", "fn": gpt_agent_process},
+        {"id": "claude", "name": "Claude", "fn": claude_agent_process},
+        {"id": "gemini", "name": "Gemini", "fn": gemini_agent_process},
+    ]
+
+def process_event(agent, context, event):
+    """
+    Pass event and context to the agent's processing fn.
+    Logs and returns standardized agent output dict.
+    """
+    text = event.get("raw_text", "")
+    agent_response = agent["fn"](text, context)
+    result = {
+        "agent_name": agent["name"],
+        "rationale": agent_response["rationale"],
+        "mood": agent_response.get("mood", "neutral"),
+        "score": 1.0,  # stub for now
+    }
+    print(f"[{agent['name']} Result] {result['rationale'][:200]}...\n")
+    return result
+
+
+### FILE: core\audit.py
+
+
+
+### FILE: core\consensus_engine.py
+
+from core.graph_io import write_consensus_to_graph as graph_write_consensus
+
+def check_alignment(agent_responses, threshold=0.7):
+    """
+    Checks if all agent responses are present and returns True if so.
+    For this vertical slice: always returns True if nonempty list.
+    """
+    if not agent_responses or len(agent_responses) == 0:
+        print("[consensus_engine] No agent responses provided!")
+        return False
+    print(f"[consensus_engine] {len(agent_responses)} agent responses received. (Alignment stub: always agree for now)")
+    return True
+
+def build_consensus(agent_responses):
+    """
+    Combines all agent rationales into one consensus rationale, averages scores.
+    """
+    if not agent_responses:
+        print("[consensus_engine] No agent responses to build consensus.")
+        return None
+
+    combined_rationale = "\n\n".join(
+        [f"[{a['agent_name']}] {a['rationale']}" for a in agent_responses]
+    )
+    average_score = sum(a.get("score", 1.0) for a in agent_responses) / len(agent_responses)
+    consensus = {
+        "rationale": combined_rationale,
+        "consensus_score": average_score,
+        "agent_names": [a["agent_name"] for a in agent_responses]
+    }
+    print(f"[consensus_engine] Built consensus. Avg score: {average_score:.2f}")
+    return consensus
+
+def store_consensus_in_graph(consensus):
+    """
+    Writes the consensus node to the Neo4j graph.
+    """
+    if consensus is None:
+        print("[consensus_engine] No consensus to write to graph.")
+        return None
+    node = graph_write_consensus(consensus)
+    print(f"[consensus_engine] Consensus node written. ID: {node.get('id', '[no id]')}")
+    return node
+
+def consensus_pipeline(event_id, agent_responses):
+    """
+    Full consensus flow: check alignment, build, write, or trigger peer review if needed.
+    """
+    if check_alignment(agent_responses):
+        consensus = build_consensus(agent_responses)
+        node = store_consensus_in_graph(consensus)
+        return {"status": "consensus", "node": node}
+    else:
+        # Add this block:
+        from core.peer_review_engine import peer_review_pipeline
+        review_result = peer_review_pipeline(event_id, agent_responses)
+        return {"status": "peer_review", "review_result": review_result}
+
+
+### FILE: core\context_engine.py
+
+import os
+import openai
+from .graph_io import vector_search, get_node_summary
+from dotenv import load_dotenv
+load_dotenv()  # By default, loads .env from current working dir
+
+# CONFIG
+EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+client = openai.OpenAI(api_key=OPENAI_API_KEY)  # Uses env var or you can override
+
+def embed_text(raw_text):
+    print(f"[embed_text] Input: {raw_text!r}")
+    try:
+        resp = client.embeddings.create(input=[raw_text], model=EMBED_MODEL)
+        embedding = resp.data[0].embedding
+        print(f"[embed_text] Success! First 5 dims: {embedding[:5]}")
+        return embedding
+    except Exception as e:
+        print(f"[embed_text] ERROR: {e}")
+        return [0.0] * 1536
+
+def load_relevant_context(vector, agent_id=None, max_tokens=2048):
+    print(f"[load_relevant_context] Input vector (first 5): {vector[:5]}")
+    # 1. Vector search for top-k nodes (events, core memories)
+    nodes = vector_search(vector, top_k=8)
+    print(f"[load_relevant_context] Retrieved {len(nodes)} nodes from Neo4j")
+    # 2. Compress to prompt-ready blocks
+    context_blocks = []
+    for i, n in enumerate(nodes):
+        block = get_node_summary(n)
+        print(f"[load_relevant_context] Block {i+1}: {block}")
+        context_blocks.append(block)
+    # 3. Enforce token budget (rough estimate: 3 tokens per word)
+    total_tokens = sum(len(block["summary"].split()) * 3 for block in context_blocks)
+    print(f"[load_relevant_context] Total estimated tokens: {total_tokens}")
+    if total_tokens > max_tokens:
+        print(f"[load_relevant_context] Context exceeds max tokens ({max_tokens}). Compressing.")
+        context_blocks = context_blocks[:4]
+        context_blocks.append({
+            "summary": "Additional relevant context compressed for token limit.",
+            "key_insight": "",
+            "origin_metadata": {},
+            "relevance_score": 0.0
+        })
+    return context_blocks
+
+def structure_context_for_prompt(context_blocks):
+    print(f"[structure_context_for_prompt] Formatting {len(context_blocks)} blocks")
+    prompt = ""
+    for i, block in enumerate(context_blocks):
+        prompt += (
+            f"[Memory {i+1}]\n"
+            f"Summary: {block.get('summary', '')}\n"
+            f"Key Insight: {block.get('key_insight', '')}\n"
+            f"Metadata: {block.get('origin_metadata', {})}\n\n"
+        )
+    print(f"[structure_context_for_prompt] Final prompt length: {len(prompt)} chars")
+    return prompt
+
+
+### FILE: core\events.py
+
+
+
+### FILE: core\graph_io.py
+
+import os
+import uuid
+import json
+from neo4j import GraphDatabase
+from dotenv import load_dotenv
+load_dotenv()
+
+NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "password")
+
+driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+def vector_search(embedding, top_k=8):
+    return []
+
+def get_node_summary(node):
+    return {
+        "summary": "",
+        "key_insight": "",
+        "origin_metadata": {},
+        "relevance_score": 0.0
+    }
+
+import uuid
+import json
+
+def create_node(label, properties):
+    # Add UUID if not present
+    if 'id' not in properties:
+        properties['id'] = str(uuid.uuid4())
+    # Neo4j can't store dicts or list of dicts. Serialize them.
+    safe_props = {}
+    for k, v in properties.items():
+        # Accept bool/int/float/str/list of primitives or None as-is
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            safe_props[k] = v
+        elif isinstance(v, list) and all(isinstance(i, (str, int, float, bool)) or i is None for i in v):
+            safe_props[k] = v
+        else:
+            # For dicts, list of dicts, or anything else, store as JSON string
+            safe_props[k] = json.dumps(v)
+    with driver.session() as session:
+        result = session.run(
+            f"CREATE (n:{label} $props) RETURN n",
+            props=safe_props
+        )
+        record = result.single()
+        return dict(record["n"]) if record else safe_props
+
+def embed_vector_in_node(node_id, vector):
+    # Update an existing node with a new embedding/vector field
+    with driver.session() as session:
+        session.run(
+            "MATCH (n) WHERE n.id = $id SET n.embedding = $vector",
+            id=node_id,
+            vector=vector
+        )
+# /core/graph_io.py
+
+def create_relationship(source_id, target_id, rel_type, properties=None):
+    """
+    Creates a relationship between two nodes in the Neo4j graph.
+    - source_id: ID of the source node
+    - target_id: ID of the target node
+    - rel_type: Relationship type (e.g., 'REVIEWS', 'CONTRADICTS')
+    - properties: Dict of relationship properties (optional)
+    """
+    properties = properties or {}
+    # Stub: Just print the intended action for now
+    print(f"[graph_io] Create relationship: ({source_id})-[:{rel_type} {properties}]->({target_id})")
+    # In production, run Cypher here via Neo4j driver.
+    return {"source_id": source_id, "target_id": target_id, "rel_type": rel_type, "properties": properties}
+
+def write_consensus_to_graph(consensus):
+    # Create Consensus node; expects dict with required fields
+    consensus['id'] = consensus.get('id', str(uuid.uuid4()))
+    with driver.session() as session:
+        result = session.run(
+            "CREATE (n:Consensus $props) RETURN n",
+            props=consensus
+        )
+        record = result.single()
+        return dict(record["n"]) if record else consensus
+
+
+### FILE: core\memory_engine.py
+
+"""
+Memory Engine: Promotion, Decay, Emotion Tagging, Resurfacing
+"""
+
+import datetime
+import math
+import uuid
+from . import graph_io
+
+MEMORY_PROMOTION_THRESHOLD = 0.85  # Tune as needed
+MEMORY_DECAY_RATE = 0.03           # Per day/epoch
+EMOTION_TAGGING_ENABLED = True
+
+def evaluate_event(event_id):
+    """
+    Score an event for relevance, novelty, alignment.
+    Promote, tag emotion, or decay as required.
+    """
+    # TODO: Load event from graph_io, compute score
+    # If score >= threshold, promote to core memory
+    # If EMOTION_TAGGING_ENABLED, call tag_emotion
+    pass
+
+def promote_to_core_memory(event_id, rationale=None):
+    """
+    Promote an Event node to CoreMemory.
+    """
+    # TODO: Create CoreMemory node, relate to event, copy rationale/summary
+    pass
+
+def tag_emotion(event_id):
+    """
+    Attach an Emotion node to an event.
+    """
+    # TODO: Use LLM/emotion_engine or heuristic, attach Emotion node
+    pass
+
+def run_decay_cycle():
+    """
+    Periodically decay or prune low-value events.
+    """
+    # TODO: Reduce relevance, delete/prune old/irrelevant events
+    pass
+
+def prune_branch(node_id):
+    """
+    Remove a low-value memory branch from the graph.
+    """
+    # TODO: Traverse from node_id, delete/prune nodes
+    pass
+
+def resurface_valuable_memories():
+    """
+    Find and surface valuable but forgotten memories.
+    """
+    # TODO: Query by relevance/novelty, trigger agent reflection
+    pass
+
+
+### FILE: core\peer_review_engine.py
+
+# /core/peer_review_engine.py
+
+from core.graph_io import create_node, create_relationship
+from core.consensus_engine import build_consensus, store_consensus_in_graph
+import uuid
+from datetime import datetime, timezone
+
+CONFLICT_THRESHOLD = 0.5  # Score difference or rationale mismatch triggers review
+
+def detect_conflict(agent_responses, threshold=CONFLICT_THRESHOLD):
+    """
+    Checks if agent responses are divergent enough to trigger peer review.
+    Returns True if conflict detected.
+    """
+    if not agent_responses or len(agent_responses) < 2:
+        print("[peer_review_engine] Not enough agent responses for conflict detection.")
+        return False
+    scores = [a.get("score", 0.5) for a in agent_responses]
+    if (max(scores) - min(scores)) > threshold:
+        print("[peer_review_engine] Conflict detected based on score difference.")
+        return True
+    rationales = [a["rationale"] for a in agent_responses]
+    if _rationales_diverge(rationales):
+        print("[peer_review_engine] Conflict detected based on rationale divergence.")
+        return True
+    print("[peer_review_engine] No significant conflict detected.")
+    return False
+
+def _rationales_diverge(rationales):
+    # Very basic: consider rationales different if any do not match.
+    first = rationales[0]
+    return any(r != first for r in rationales[1:])
+
+def generate_peer_critiques(agent_responses):
+    """
+    Each agent critiques the other agents' rationales.
+    Returns list of critique dicts.
+    """
+    critiques = []
+    for i, a in enumerate(agent_responses):
+        for j, b in enumerate(agent_responses):
+            if i == j:
+                continue
+            critique = f"[{a['agent_name']}] reviews [{b['agent_name']}]: " \
+                       f"I {'agree' if a['rationale'] == b['rationale'] else 'disagree'} with your reasoning."
+            score = 1.0 if a['rationale'] == b['rationale'] else 0.0
+            critiques.append({
+                "from": a["agent_name"],
+                "to": b["agent_name"],
+                "critique": critique,
+                "score": score,
+            })
+    print(f"[peer_review_engine] Generated {len(critiques)} peer critiques.")
+    return critiques
+
+def evaluate_critiques(peer_critiques):
+    """
+    Returns True if all critiques are positive (score > 0).
+    """
+    scores = [c["score"] for c in peer_critiques]
+    all_positive = min(scores) > 0 if scores else False
+    print(f"[peer_review_engine] Critique alignment: {'aligned' if all_positive else 'still divergent'}.")
+    return all_positive
+
+def write_review_nodes(event_id, agent_responses, peer_critiques, status):
+    """
+    Writes PeerReview and optional ConflictEvent nodes to Neo4j.
+    """
+    peer_review_id = str(uuid.uuid4())
+    node = create_node("PeerReview", {
+        "id": peer_review_id,
+        "event_id": event_id,
+        "critiques": peer_critiques,
+        "agent_responses": agent_responses,
+        "status": status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    create_relationship(peer_review_id, event_id, "REVIEWS", {})
+    print(f"[peer_review_engine] PeerReview node written. ID: {peer_review_id}")
+
+    conflict_id = None
+    if status == "unresolved":
+        conflict_id = str(uuid.uuid4())
+        create_node("ConflictEvent", {
+            "id": conflict_id,
+            "event_id": event_id,
+            "peer_review_id": peer_review_id,
+            "status": "open",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        create_relationship(conflict_id, event_id, "CONTRADICTS", {})
+        print(f"[peer_review_engine] ConflictEvent node written. ID: {conflict_id}")
+
+    return {
+        "peer_review_id": peer_review_id,
+        "conflict_id": conflict_id,
+        "status": status,
+    }
+
+def peer_review_pipeline(event_id, agent_responses):
+    """
+    Full peer review cycle:
+      - Detect conflict
+      - Generate peer critiques
+      - Evaluate for alignment
+      - If resolved, build/store consensus and log review as resolved
+      - If not, log unresolved and create ConflictEvent
+    Returns dict: {status, peer_review_id, conflict_id, consensus_node (if any)}
+    """
+    if not detect_conflict(agent_responses):
+        print("[peer_review_engine] No conflict: skipping peer review.")
+        return {"status": "no_conflict"}
+
+    peer_critiques = generate_peer_critiques(agent_responses)
+    if evaluate_critiques(peer_critiques):
+        # Second-pass consensus attempt
+        consensus = build_consensus(agent_responses)
+        consensus_node = store_consensus_in_graph(consensus)
+        result = write_review_nodes(event_id, agent_responses, peer_critiques, "resolved")
+        result["consensus_node"] = consensus_node
+        print("[peer_review_engine] Conflict resolved after peer review.")
+        return result
+
+    # Still unresolved
+    result = write_review_nodes(event_id, agent_responses, peer_critiques, "unresolved")
+    print("[peer_review_engine] Peer review unresolved: escalated to ConflictEvent.")
+    return result
+
+# For import: main entrypoint is peer_review_pipeline(event_id, agent_responses)
+
+if __name__ == "__main__":
+    # Example: Strong disagreement between agents
+    agent_responses = [
+        {"agent_name": "GPT", "rationale": "Let’s do A", "score": 0.7},
+        {"agent_name": "Gemini", "rationale": "Let’s do B", "score": 0.1},
+        {"agent_name": "Claude", "rationale": "Let’s do B", "score": 0.2},
+    ]
+    event_id = "test-event-1"
+    result = peer_review_pipeline(event_id, agent_responses)
+    print(result)
+
+    # Example: All agents agree
+    agent_responses = [
+        {"agent_name": "GPT", "rationale": "Let’s do C", "score": 0.8},
+        {"agent_name": "Gemini", "rationale": "Let’s do C", "score": 0.85},
+        {"agent_name": "Claude", "rationale": "Let’s do C", "score": 0.82},
+    ]
+    event_id = "test-event-2"
+    result = peer_review_pipeline(event_id, agent_responses)
+    print(result)
+
+
+### FILE: core\socket_handlers.py
+
+"""
+/core/socket_handlers.py
+
+Real-Time Socket Handlers for Timeline, Event, Chat, Agent, and Audit Updates.
+- Emits all real-time state changes via Flask-SocketIO to the frontend.
+- Integrate by calling these emitters after new data is created/updated in the system.
+
+Collaborators:
+    - app.py (registers and shares socketio instance)
+    - timeline_engine.py, events.py, agents.py, meta_audit.py, consensus_engine.py
+    - Frontend: listens on 'timeline_update', 'event_update', 'chat_response', etc.
+"""
+
+from flask_socketio import SocketIO
+
+# Import the main socketio instance from app.py (adjust path if needed)
+try:
+    from app import socketio
+except ImportError:
+    socketio = None  # To avoid IDE errors during early dev
+
+def emit_timeline_update(entry):
+    """
+    Emit 'timeline_update' to all subscribed clients when a new TimelineEntry is created.
+    """
+    if socketio:
+        socketio.emit('timeline_update', entry, namespace="/")
+    # else: warn or log
+
+def emit_event_update(event):
+    """
+    Emit 'event_update' when a new or updated event is processed.
+    """
+    if socketio:
+        socketio.emit('event_update', event, namespace="/")
+
+def emit_chat_response(msg_obj):
+    """
+    Emit 'chat_response' to push live chat output to the UI.
+    """
+    if socketio:
+        socketio.emit('chat_response', msg_obj, namespace="/")
+
+def emit_agent_state(agent_id, state):
+    """
+    Emit 'agent_update' for mood/energy or state changes to agent dashboard.
+    """
+    if socketio:
+        socketio.emit('agent_update', {'id': agent_id, 'state': state}, namespace="/")
+
+def emit_meta_audit(audit_obj):
+    """
+    Emit 'meta_audit' for system health checks or audit results.
+    """
+    if socketio:
+        socketio.emit('meta_audit', audit_obj, namespace="/")
+
+# Optional: Add more emitters for custom channels as your system grows.
+
+# Usage Examples:
+# After creating a TimelineEntry:
+#   from core.socket_handlers import emit_timeline_update
+#   emit_timeline_update(entry_dict)
+#
+# After chat processing:
+#   emit_chat_response(response_obj)
+#
+# In agent logic:
+#   emit_agent_state(agent_id, state_dict)
+#
+# For admin/audit logs:
+#   emit_meta_audit(audit_obj)
+
+
+### FILE: core\test.py
+
+# test.py
+import requests
+import time
+
+BASE = "https://ecodia.au"
+
+def post_event(text):
+    res = requests.post(f"{BASE}/api/event", json={"text": text})
+    print("POST /api/event:", res.status_code, res.json())
+    return res.json()
+
+def get_timeline():
+    res = requests.get(f"{BASE}/api/timeline")
+    print("GET /api/timeline:", res.status_code)
+    data = res.json()
+    print(f"Timeline entries: {len(data)}")
+    for entry in data[:3]:  # print latest 3
+        print(f"- {entry['timestamp']} | {entry['summary']}")
+    return data
+
+if __name__ == "__main__":
+    print("Testing POST /api/event...")
+    post_event("Memory test: This should show up on the timeline!")
+    time.sleep(2)  # give backend a sec to process
+
+    print("\nTesting GET /api/timeline...")
+    get_timeline()
+
+
+### FILE: core\timeline_engine.py
+
+"""
+Timeline Engine: Narrative Generation & Timeline Entries
+"""
+
+import datetime
+import uuid
+from . import graph_io
+
+def detect_inflection_point(event_id):
+    """
+    Decide if an event or memory is significant for the timeline.
+    """
+    # TODO: Check event type, score, or flag for timeline-worthy events
+    pass
+
+def generate_summary_text(events):
+    """
+    Generate a symbolic/narrative summary (optionally use LLM).
+    """
+    # TODO: Summarize events into a short narrative string
+    pass
+
+def create_timeline_entry(summary, vector=None, source_ids=None, emotion=None):
+    """
+    Create a TimelineEntry node in the graph.
+    """
+    # TODO: Insert node via graph_io, link source_ids (events/memories/audits)
+    entry = {
+        "id": str(uuid.uuid4()),
+        "summary": summary,
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "vector": vector,
+        "emotion": emotion,
+        "source_ids": source_ids or [],
+    }
+    # Example: graph_io.create_node("TimelineEntry", entry)
+    return entry
+
+def link_to_previous_entry(entry_id):
+    """
+    Maintain PREVIOUS/NEXT edges for timeline continuity.
+    """
+    # TODO: Query most recent TimelineEntry, create edge
+    pass
+
+def get_full_timeline():
+    """
+    Return all TimelineEntry nodes, sorted by timestamp DESC.
+    """
+    # TODO: Query graph_io for TimelineEntry nodes, sort & return
+    return []
+
+
+### FILE: core\utils.py
+
+
+
+### FILE: core\__init__.py
+
+
+
+### FILE: core\actuators\cypher.py
+
+# /core/actuators/cypher.py
+
+def execute(action_plan):
+    pass
+
+
+### FILE: core\actuators\device.py
+
+# /core/actuators/device.py
+
+def execute(action_plan):
+    pass
+
+
+### FILE: core\actuators\email.py
+
+# /core/actuators/email.py
+
+def execute(action_plan):
+    pass
+
+
+### FILE: core\actuators\gsheet.py
+
+# /core/actuators/gsheet.py
+
+def execute(action_plan):
+    pass
+
+
+### FILE: core\actuators\__init__.py
+
+# /core/actuators/__init__.py
+
+def dispatch_actuator(action_plan):
+    # TODO: Dispatch stub
+    pass
+
+
+### FILE: routes\agents.py
+
+
+
+### FILE: routes\auth.py
+
+
+
+### FILE: routes\chat.py
+
+from flask import Blueprint, request, jsonify
+from core import (
+    graph_io, context_engine, agents, consensus_engine,
+    peer_review_engine, memory_engine, actuators, socket_handlers
+)
+from uuid import uuid4
+from datetime import datetime, timezone
+
+chat_bp = Blueprint('chat', __name__)
+
+@chat_bp.route('/api/chat', methods=['POST'])
+def submit_chat():
+    data = request.get_json()
+    raw_text = data.get("raw_text")
+    user_origin = data.get("user_origin", "anonymous")
+
+    # Early validation
+    if not raw_text or not raw_text.strip():
+        return jsonify({"status": "error", "message": "Missing raw_text"}), 400
+
+    # Step 1: Create Event node
+    event_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).isoformat()
+    event_node = graph_io.create_node("Event", {
+        "id": event_id,
+        "raw_text": raw_text,
+        "timestamp": timestamp,
+        "agent_origin": user_origin,
+        "type": "chat",
+        "status": "unprocessed"
+    })
+
+    # Step 2: Embed + Context
+    vector = context_engine.embed_text(raw_text)
+    graph_io.embed_vector_in_node(event_id, vector)
+    context_blocks = context_engine.load_relevant_context(vector)
+
+    # Step 3: Run Agent Reflections
+    agent_responses = []
+    for agent in agents.load_agents():
+        response = agents.process_event(agent, context_blocks, event_node)
+        agent_responses.append(response)
+        graph_io.create_node("Rationale", response)
+
+    # Step 4: Consensus or Peer Review (pipeline does both)
+    pipeline_result = consensus_engine.consensus_pipeline(event_id, agent_responses)
+
+    # Optionally handle action plans (for actuators)
+    if pipeline_result.get("status") == "consensus":
+        node = pipeline_result.get("node", {})
+        if node.get("action_plan"):
+            actuators.dispatch_actuator(node["action_plan"])
+
+    # Choose rationale summary for UI
+    if pipeline_result.get("status") == "consensus":
+        rationale_summary = pipeline_result.get("node", {}).get("rationale")
+    elif pipeline_result.get("status") == "peer_review":
+        rationale_summary = "Under peer review—awaiting consensus."
+    else:
+        rationale_summary = "No consensus reached."
+
+    # Step 5: Memory Evaluation
+    memory_engine.evaluate_event(event_id)
+
+    # Step 6: Emit to Frontend (safe fallback if no consensus/rationale)
+    socket_handlers.emit_new_event({"id": event_id, "text": raw_text})
+    socket_handlers.emit_chat_response({"summary": rationale_summary, "id": event_id})
+
+    # Step 7: Return everything
+    return jsonify({
+        "status": "ok",
+        "event_id": event_id,
+        "pipeline_result": pipeline_result,
+        "summary": rationale_summary
+    })
+
+
+### FILE: routes\events.py
+
+from flask import Blueprint, request, jsonify
+from datetime import datetime, timezone
+from config import settings
+from neo4j import GraphDatabase
+from core.agents import gpt_agent_process, gemini_agent_process, claude_agent_process
+from core.consensus_engine import consensus_pipeline
+from dotenv import load_dotenv
+import uuid
+
+load_dotenv()
+
+events_bp = Blueprint('events', __name__)
+driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASS))
+
+@events_bp.route('/api/event', methods=['POST'])
+def create_event():
+    data = request.json
+    raw_text = data.get("text")
+    timestamp = datetime.now(timezone.utc).isoformat()
+    event_id = str(uuid.uuid4())
+
+    # 1. Create unprocessed Event node and return id
+    with driver.session() as session:
+        session.run("""
+            CREATE (e:Event {
+                id: $id,
+                raw_text: $raw_text,
+                timestamp: $timestamp,
+                status: "unprocessed"
+            })
+        """, {"id": event_id, "raw_text": raw_text, "timestamp": timestamp})
+
+    # 2. Get agent outputs
+    gpt_output = gpt_agent_process(raw_text)
+    gemini_output = gemini_agent_process(raw_text)
+    claude_output = claude_agent_process(raw_text)
+
+    # 3. Build agent_responses for pipeline
+    agent_responses = [
+        {"agent_name": "GPT", **gpt_output},
+        {"agent_name": "Gemini", **gemini_output},
+        {"agent_name": "Claude", **claude_output}
+    ]
+
+    # 4. Run consensus/peer review pipeline
+    pipeline_result = consensus_pipeline(event_id, agent_responses)
+
+    # 5. Extract consensus rationale if present
+    if pipeline_result.get("status") == "consensus":
+        consensus = pipeline_result.get("node", {}).get("rationale")
+    elif pipeline_result.get("status") == "peer_review":
+        consensus = "Under peer review—awaiting consensus."
+    else:
+        consensus = "No consensus reached."
+
+    # 6. Update Event node with rationales and result
+    with driver.session() as session:
+        session.run("""
+            MATCH (e:Event {id: $id})
+            SET e.status = $status,
+                e.gpt_rationale = $gpt,
+                e.gemini_rationale = $gemini,
+                e.claude_rationale = $claude,
+                e.consensus_rationale = $consensus
+        """, {
+            "id": event_id,
+            "status": pipeline_result.get("status"),
+            "gpt": gpt_output["rationale"],
+            "gemini": gemini_output["rationale"],
+            "claude": claude_output["rationale"],
+            "consensus": consensus
+        })
+
+    # 7. Return pipeline_result for full trace
+    return jsonify({
+        "event_id": event_id,
+        "status": pipeline_result.get("status"),
+        "pipeline_result": pipeline_result,
+        "gpt": gpt_output["rationale"],
+        "gemini": gemini_output["rationale"],
+        "claude": claude_output["rationale"],
+        "consensus": consensus
+    })
+
+
+### FILE: routes\test.py
+
+# routes/test.py
+import os
+import openai
+from flask import Blueprint, jsonify
+
+bp = Blueprint("test", __name__)
+
+@bp.route("/api/test-openai", methods=["GET"])
+def test_openai():
+    try:
+        openai.api_key = os.environ["OPENAI_API_KEY"]
+        response = openai.Model.list()
+        return jsonify({"status": "ok", "models": [m.id for m in response.data]})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+### FILE: routes\timeline.py
+
+"""
+Timeline API: Serve TimelineEntry nodes to frontend
+"""
+
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required
+from core import timeline_engine
+
+timeline_bp = Blueprint('timeline_bp', __name__)
+
+@timeline_bp.route('/api/timeline', methods=['GET'])
+def get_timeline():
+    """
+    GET /api/timeline
+    Returns: List of TimelineEntry nodes (public)
+    """
+    entries = timeline_engine.get_full_timeline()
+    return jsonify(entries)
+
+@timeline_bp.route('/api/timeline/<entry_id>', methods=['GET'])
+@jwt_required()
+def get_timeline_entry(entry_id):
+    """
+    GET /api/timeline/<id>
+    Returns: Full TimelineEntry details (admin only)
+    """
+    # TODO: implement detail lookup by id
+    return jsonify({})
+
+
+### FILE: routes\__init__.py
+

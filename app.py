@@ -42,7 +42,7 @@ def create_app():
     return app
 
 # SocketIO setup (must be global for import in core/socket_handlers.py)
-socketio = SocketIO(cors_allowed_origins="*")  # Allow all for dev; restrict in prod
+socketio = SocketIO(cors_allowed_origins="*", async_mode="threading")  # Allow all for dev; restrict in prod
 
 app = create_app()
 socketio.init_app(app, async_mode="eventlet")

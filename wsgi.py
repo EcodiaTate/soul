@@ -1,5 +1,4 @@
-# wsgi.py
-from app import app, socketio
+from app import create_app, socketio
 
-if __name__ == "__main__":
-    socketio.run(app)
+app = create_app()
+application = app

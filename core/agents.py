@@ -5,7 +5,6 @@ import google.generativeai as genai
 # ✅ Works with google-generativeai >= 0.5.4
 genai.configure(
     api_key=os.getenv("GEMINI_API_KEY"),
-    api_version="v1"
 )
 
 gemini_model = genai.GenerativeModel("gemini-1.5-pro")

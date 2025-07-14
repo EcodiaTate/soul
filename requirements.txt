@@ -1,2 +1,3 @@
 Flask
 gunicorn
+eventlet>=0.24.1

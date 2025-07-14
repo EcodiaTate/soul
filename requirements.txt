@@ -3,7 +3,7 @@ Flask
 gunicorn
 gevent
 python-dotenv
-openai
+openai>=1.0.0
 flask-socketio
 requests
 flask-cors

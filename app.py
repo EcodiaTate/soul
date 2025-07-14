@@ -5,14 +5,15 @@ load_dotenv()
 
 from routes.events import events_bp
 from routes import test
-
+from routes.chat import chat_bp
 def create_app():
     app = Flask(__name__)
 
     # ✅ Register blueprints inside the app context
     app.register_blueprint(events_bp)
     app.register_blueprint(test.bp)
-
+    app.register_blueprint(chat_bp)
+    
     @app.route("/api/ping")
     def ping():
         return jsonify({"status": "ok"})

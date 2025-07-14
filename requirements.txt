@@ -10,3 +10,4 @@ flask-socketio
 requests
 numpy
 flask-cors
+pandas

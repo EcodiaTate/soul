@@ -3,6 +3,8 @@ neo4j
 Flask
 gunicorn
 gevent
+gevent-websocket
+Flask-SocketIO
 python-dotenv
 openai>=1.0.0
 httpx==0.27.0
@@ -12,3 +14,4 @@ numpy
 flask-cors
 pandas
 google-generativeai
+eventlet

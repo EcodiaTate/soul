@@ -6,3 +6,7 @@ def create_node(label, properties):
 
 def embed_vector_in_node(node_id, vector):
     pass
+
+def write_consensus_to_graph(consensus):
+    # TODO: Implement Neo4j consensus write
+    pass

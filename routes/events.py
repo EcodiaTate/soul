@@ -3,53 +3,41 @@ from datetime import datetime
 from config import settings
 from neo4j import GraphDatabase
 from core.agents import gpt_agent_process, gemini_agent_process, claude_agent_process
-import uuid
+
 events_bp = Blueprint('events', __name__)
-driver = GraphDatabase.driver(
-    settings.NEO4J_URI, 
-    auth=(settings.NEO4J_USER, settings.NEO4J_PASS)
-)
+driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASS))
 
 @events_bp.route('/api/event', methods=['POST'])
 def create_event():
     data = request.json
     raw_text = data.get("text")
     timestamp = datetime.utcnow().isoformat()
-    event_id = str(uuid.uuid4())
 
     # 1. Create unprocessed event node
-    session = driver.session()
-    try:
+    with driver.session() as session:
         session.run("""
             CREATE (e:Event {
-                id: $id,
+                id: apoc.create.uuid(),
                 raw_text: $raw_text,
                 timestamp: $timestamp,
                 status: "unprocessed"
             })
-        """, {
-            "id": event_id,
-            "raw_text": raw_text,
-            "timestamp": timestamp
-        })
-    finally:
-        session.close()
+        """, {"raw_text": raw_text, "timestamp": timestamp})
 
     # 2. Process with all 3 agents
     gpt_output = gpt_agent_process(raw_text)
     gemini_output = gemini_agent_process(raw_text)
     claude_output = claude_agent_process(raw_text)
 
-    # 3. Determine consensus
-    rationales = {gpt_output["rationale"], gemini_output["rationale"], claude_output["rationale"]}
-    consensus = gpt_output["rationale"] if len(rationales) == 1 else None
+    # 3. Determine consensus (basic logic for now)
+    rationales = [gpt_output["rationale"], gemini_output["rationale"], claude_output["rationale"]]
+    consensus = gpt_output["rationale"] if len(set(rationales)) == 1 else None
     status = "consensus" if consensus else "needs_review"
 
     # 4. Update the event node with all 3 outputs
-    session = driver.session()
-    try:
+    with driver.session() as session:
         session.run("""
-            MATCH (e:Event {id: $id})
+            MATCH (e:Event {raw_text: $raw_text, timestamp: $timestamp})
             SET e.status = $status,
                 e.gpt_rationale = $gpt,
                 e.gemini_rationale = $gemini,
@@ -57,7 +45,8 @@ def create_event():
                 e.consensus_rationale = $consensus,
                 e.mood = $mood
         """, {
-            "id": event_id,
+            "raw_text": raw_text,
+            "timestamp": timestamp,
             "status": status,
             "gpt": gpt_output["rationale"],
             "gemini": gemini_output["rationale"],
@@ -65,8 +54,6 @@ def create_event():
             "consensus": consensus,
             "mood": gpt_output["mood"]
         })
-    finally:
-        session.close()
 
     return jsonify({
         "status": status,

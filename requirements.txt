@@ -5,9 +5,9 @@ gevent
 python-dotenv
 openai>=1.0.0
 httpx==0.27.0
-httpcore==0.18.0
 flask-socketio
 requests
 numpy
 flask-cors
 pandas
+google-generativeai==0.5.4

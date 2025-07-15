@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 
 from core import graph_io
-from core import llm_tools
+from core.llm_tools import llm_extract_value_vector, run_llm_emotion_vector
 
 # === GLOBALS ===
 VALUE_VECTOR_PROMPT_VERSION = 1

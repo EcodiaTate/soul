@@ -4,6 +4,7 @@ from config import settings
 from neo4j import GraphDatabase
 from core.agents import gpt_agent_process, gemini_agent_process, claude_agent_process
 from core.consensus_engine import consensus_pipeline
+from core.socket_handlers import emit_new_event  # <--- ADD THIS
 from dotenv import load_dotenv
 import uuid
 
@@ -71,7 +72,19 @@ def create_event():
             "consensus": consensus
         })
 
-    # 7. Return pipeline_result for full trace
+    # 7. Emit to socket after DB update
+    emit_new_event({
+        "id": event_id,
+        "raw_text": raw_text,
+        "timestamp": timestamp,
+        "status": pipeline_result.get("status"),
+        "gpt": gpt_output["rationale"],
+        "gemini": gemini_output["rationale"],
+        "claude": claude_output["rationale"],
+        "consensus": consensus
+    })
+
+    # 8. Return pipeline_result for full trace
     return jsonify({
         "event_id": event_id,
         "status": pipeline_result.get("status"),

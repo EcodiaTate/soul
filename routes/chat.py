@@ -5,6 +5,7 @@ from core import (
 )
 from uuid import uuid4
 from datetime import datetime, timezone
+from core.socket_handlers import emit_new_event
 
 chat_bp = Blueprint('chat', __name__)
 

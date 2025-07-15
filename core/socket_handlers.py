@@ -7,6 +7,10 @@ def emit_dream_update(dream_obj):
     from app import socketio
     socketio.emit('dream_update', dream_obj, namespace='/')
 
+def emit_new_event(event):
+    from app import socketio
+    socketio.emit('event_update', event, namespace='/')
+
 def emit_timeline_update(entry):
     from app import socketio
     socketio.emit('timeline_update', entry, namespace='/')

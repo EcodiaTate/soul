@@ -15,4 +15,3 @@ flask-cors
 pandas
 google-generativeai
 eventlet
-shadcn

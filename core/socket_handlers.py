@@ -1,59 +1,33 @@
 from flask_socketio import SocketIO
-from app import socketio
 from flask import current_app
 
 # Import the main socketio instance from app.py (adjust path if needed)
-try:
-    from app import socketio
-except ImportError:
-    socketio = None  # To avoid IDE errors during early dev
 
 def emit_dream_update(dream_obj):
-    # Import socketio from the app context to avoid circular imports
     from app import socketio
     socketio.emit('dream_update', dream_obj, namespace='/')
-    
+
 def emit_timeline_update(entry):
-    """
-    Emit 'timeline_update' to all subscribed clients when a new TimelineEntry is created.
-    """
-    if socketio:
-        socketio.emit('timeline_update', entry, namespace="/")
-    # else: warn or log
+    from app import socketio
+    socketio.emit('timeline_update', entry, namespace='/')
 
 def emit_event_update(event):
-    """
-    Emit 'event_update' when a new or updated event is processed.
-    """
-    if socketio:
-        socketio.emit('event_update', event, namespace="/")
+    from app import socketio
+    socketio.emit('event_update', event, namespace='/')
 
 def emit_chat_response(msg_obj):
-    """
-    Emit 'chat_response' to push live chat output to the UI.
-    """
-    if socketio:
-        socketio.emit('chat_response', msg_obj, namespace="/")
-
-def emit_dream_update(dream_obj):
-    
-    socketio.emit('dream_update', dream_obj, namespace='/')
+    from app import socketio
+    socketio.emit('chat_response', msg_obj, namespace='/')
 
 def emit_agent_state(agent_id, state):
-    """
-    Emit 'agent_update' for mood/energy or state changes to agent dashboard.
-    """
-    if socketio:
-        socketio.emit('agent_update', {'id': agent_id, 'state': state}, namespace="/")
+    from app import socketio
+    socketio.emit('agent_update', {'id': agent_id, 'state': state}, namespace='/')
 
 def emit_meta_audit(audit_obj):
-    """
-    Emit 'meta_audit' for system health checks or audit results.
-    """
-    if socketio:
-        socketio.emit('meta_audit', audit_obj, namespace="/")
+    from app import socketio
+    socketio.emit('meta_audit', audit_obj, namespace='/')
 
-# Optional: Add more emitters for custom channels as your system grows.
+# Optional: Add more emitters as needed for your custom channels.
 
 # Usage Examples:
 # After creating a TimelineEntry:

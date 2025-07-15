@@ -12,8 +12,8 @@ from typing import List, Dict, Any, Tuple, Optional
 
 import numpy as np
 
-from core import graph_io
-from core.llm_tools import llm_extract_value_vector, run_llm_emotion_vector
+from core import graph_io, llm_tools
+from llm_tools import llm_extract_value_vector, run_llm_emotion_vector, run_llm
 
 # === GLOBALS ===
 VALUE_VECTOR_PROMPT_VERSION = 1
@@ -156,7 +156,7 @@ def get_value_names() -> List[str]:
     return [v["name"] for v in pool if v["active"]]
 
 def llm_extract_value_vector(raw_text: str, context: dict = {}, agent: str = "") -> Dict[str, float]:
-    pool, version = get_current_value_pool()
+    frompool, version = get_current_value_pool()
     axes = [{"name": v["name"], "desc": v["description"]} for v in pool if v["active"]]
     prompt = build_llm_value_vector_prompt(raw_text, axes, version)
     response = llm_tools.run_llm(prompt, agent=agent)

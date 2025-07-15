@@ -223,3 +223,14 @@ def get_node_summary(node: Dict[str, Any]) -> Dict[str, Any]:
         "origin_metadata": {},
         "relevance_score": 0.0
     }
+
+def get_node(event_id):
+    """
+    Retrieves a single node from Neo4j by its unique event ID.
+    """
+    query = """
+    MATCH (n:Event {id: $event_id})
+    RETURN n LIMIT 1
+    """
+    result = run_cypher(query, {"event_id": event_id})
+    return result[0]["n"] if result else None

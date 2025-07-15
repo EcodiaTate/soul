@@ -10,7 +10,6 @@ import uuid
 import json
 import os
 from datetime import datetime, timezone
-
 from core.value_vector import (
     llm_extract_value_vector,
     score_value_vector,

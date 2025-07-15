@@ -18,7 +18,7 @@ from core.graph_io import (
     get_value_nodes,
     get_edge_types
 )
-from core.actuators.dispatch import dispatch_actuator
+#from core.actuators.dispatch import dispatch_actuator
 from core.socket_handlers import emit_action_update
 from core.value_vector import fuse_value_vectors, multi_vector_conflict, get_value_schema_version
 
@@ -145,9 +145,9 @@ def consensus_pipeline(event_id, agent_responses):
 
         # --- Actuator Trigger ---
         if action_plan and action_plan.get("action_type") not in ["cypher", "schema"]:
-            action_result = dispatch_actuator(action_plan)
-            emit_action_update(action_result)
-        elif action_plan:
+        #action_result = dispatch_actuator(action_plan)
+        #emit_action_update(action_result)
+        #elif action_plan:
             print("[consensus_engine] Cypher/Schema action detected. Passing to consciousness engine for later execution.")
 
         # --- Mesh edge creation: full semantic mesh ---

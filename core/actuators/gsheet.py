@@ -1,4 +1,4 @@
 # /core/actuators/gsheet.py
-
 def execute(action_plan):
-    pass
+    # Use gspread to write row
+    # Return result dict

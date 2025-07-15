@@ -1,60 +1,96 @@
 import os
 import openai
-from .graph_io import vector_search, get_node_summary
 from dotenv import load_dotenv
-load_dotenv()  # By default, loads .env from current working dir
+from .graph_io import (
+    get_unprocessed_event_nodes,
+    mark_event_processed,
+)
+from core.value_vector import get_current_value_pool, get_value_schema_version
+import json
+import logging
 
-# CONFIG
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
+
 EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
+LLM_MODEL = os.environ.get("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-client = openai.OpenAI(api_key=OPENAI_API_KEY)  # Uses env var or you can override
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-def embed_text(raw_text):
-    print(f"[embed_text] Input: {raw_text!r}")
+def process_new_events():
+    events = get_unprocessed_event_nodes()
+    value_pool = get_current_value_pool()
+    schema_version = get_value_schema_version()
+    if not events:
+        logging.info("[context_engine] No new events to process.")
+        return
+    for ev in events:
+        node_id = ev['id']
+        raw_text = ev['raw_text']
+        try:
+            context = compress_event_with_llm(raw_text, value_pool, schema_version)
+            if not context:
+                raise Exception("LLM returned empty context.")
+            context_str = json.dumps(context, ensure_ascii=False)
+            embedding = embed_text(context_str)
+            if not embedding or not isinstance(embedding, list) or sum(abs(x) for x in embedding) < 1e-6:
+                raise Exception("Embedding failed or returned near-zero vector.")
+            mark_event_processed(node_id, context, embedding)
+            logging.info(f"[context_engine] Processed event {node_id}: compressed, embedded, and marked as processed.")
+        except Exception as e:
+            logging.error(f"[context_engine] ERROR processing event {node_id}: {e}")
+
+def compress_event_with_llm(raw_text, value_pool, schema_version):
+    pool_str = ', '.join([f'"{v}"' for v in value_pool])
+    prompt = (
+        "You are a high-compression context extractor for an AI memory graph. "
+        f"Extract the main actors, actions, topics, decisions, and score each of these values (to 3 decimals) as floats 0.000-10.000: [{pool_str}]. "
+        "Respond ONLY with valid JSON as:\n"
+        '{"actors": [], "actions": [], "topics": [], "decision": "", '
+        f'"value_vector": {{"{value_pool[0]}": 0.000}}, "value_schema_version": "{schema_version}", "keypoints": []}}\n'
+        f"Input: {raw_text}"
+    )
     try:
-        resp = client.embeddings.create(input=[raw_text], model=EMBED_MODEL)
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[{"role": "system", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=384
+        )
+        text = response.choices[0].message.content
+        context = json.loads(text)
+        return context
+    except Exception as e:
+        logging.error(f"[compress_event_with_llm] ERROR for input: {raw_text[:80]}... | {e}")
+        return None
+
+def embed_text(context_text):
+    try:
+        resp = client.embeddings.create(input=[context_text], model=EMBED_MODEL)
         embedding = resp.data[0].embedding
-        print(f"[embed_text] Success! First 5 dims: {embedding[:5]}")
+        if not embedding:
+            raise Exception("Embedding result empty.")
         return embedding
     except Exception as e:
-        print(f"[embed_text] ERROR: {e}")
-        return [0.0] * 1536
+        logging.error(f"[embed_text] ERROR: {e}")
+        return None
 
-def load_relevant_context(vector, agent_id=None, max_tokens=2048):
-    print(f"[load_relevant_context] Input vector (first 5): {vector[:5]}")
-    # 1. Vector search for top-k nodes (events, core memories)
-    nodes = vector_search(vector, top_k=8)
-    print(f"[load_relevant_context] Retrieved {len(nodes)} nodes from Neo4j")
-    # 2. Compress to prompt-ready blocks
-    context_blocks = []
-    for i, n in enumerate(nodes):
-        block = get_node_summary(n)
-        print(f"[load_relevant_context] Block {i+1}: {block}")
-        context_blocks.append(block)
-    # 3. Enforce token budget (rough estimate: 3 tokens per word)
-    total_tokens = sum(len(block["summary"].split()) * 3 for block in context_blocks)
-    print(f"[load_relevant_context] Total estimated tokens: {total_tokens}")
-    if total_tokens > max_tokens:
-        print(f"[load_relevant_context] Context exceeds max tokens ({max_tokens}). Compressing.")
-        context_blocks = context_blocks[:4]
-        context_blocks.append({
-            "summary": "Additional relevant context compressed for token limit.",
-            "key_insight": "",
-            "origin_metadata": {},
-            "relevance_score": 0.0
-        })
-    return context_blocks
-
-def structure_context_for_prompt(context_blocks):
-    print(f"[structure_context_for_prompt] Formatting {len(context_blocks)} blocks")
-    prompt = ""
-    for i, block in enumerate(context_blocks):
-        prompt += (
-            f"[Memory {i+1}]\n"
-            f"Summary: {block.get('summary', '')}\n"
-            f"Key Insight: {block.get('key_insight', '')}\n"
-            f"Metadata: {block.get('origin_metadata', {})}\n\n"
-        )
-    print(f"[structure_context_for_prompt] Final prompt length: {len(prompt)} chars")
-    return prompt
+def process_single_event(event_id, raw_text, value_pool=None, schema_version=None):
+    if value_pool is None:
+        value_pool = get_current_value_pool()
+    if schema_version is None:
+        schema_version = get_value_schema_version()
+    try:
+        context = compress_event_with_llm(raw_text, value_pool, schema_version)
+        if not context:
+            raise Exception("LLM returned empty context.")
+        context_str = json.dumps(context, ensure_ascii=False)
+        embedding = embed_text(context_str)
+        if not embedding or not isinstance(embedding, list) or sum(abs(x) for x in embedding) < 1e-6:
+            raise Exception("Embedding failed or returned near-zero vector.")
+        mark_event_processed(event_id, context, embedding)
+        logging.info(f"[context_engine] Processed single event {event_id}")
+    except Exception as e:
+        logging.error(f"[context_engine] ERROR processing single event {event_id}: {e}")

@@ -31,6 +31,10 @@ def emit_meta_audit(audit_obj):
     from app import socketio
     socketio.emit('meta_audit', audit_obj, namespace='/')
 
+def emit_action_update(action_obj):
+    from app import socketio
+    socketio.emit("action_update", action_obj, namespace="/")
+
 # Optional: Add more emitters as needed for your custom channels.
 
 # Usage Examples:

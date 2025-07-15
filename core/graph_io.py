@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
-
+# TODO introduce emotion vectors - static vector with ratings
 load_dotenv()
 
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")

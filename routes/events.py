@@ -17,6 +17,8 @@ driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, set
 def create_event():
     data = request.json
     raw_text = data.get("text")
+    if not raw_text or not isinstance(raw_text, str) or not raw_text.strip():
+        return jsonify({"status": "error", "message": "Missing or invalid 'text' in request body"}), 400
     timestamp = datetime.now(timezone.utc).isoformat()
     event_id = str(uuid.uuid4())
 

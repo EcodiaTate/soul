@@ -13,9 +13,9 @@ from core.value_vector import get_current_value_pool, get_value_schema_version
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
-LLM_MODEL = os.environ.get("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
+LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # -------------------- MAIN --------------------

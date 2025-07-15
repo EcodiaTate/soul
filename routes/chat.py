@@ -34,14 +34,14 @@ def submit_chat():
     # --- Step 3: Embed + Context Blocks ---
     vector = context_engine.embed_text(raw_text)
     graph_io.embed_vector_in_node(event_id, vector)
-    context_blocks = context_engine.load_relevant_context(vector)
+    #context_blocks = context_engine.load_relevant_context(vector)
 
     # --- Step 4: Agent Mesh (run all agents on event) ---
     agent_responses = agents.run_all_agents({
         "id": event_id,
         "raw_text": raw_text,
         "timestamp": timestamp,
-        "context_blocks": context_blocks,
+        #"context_blocks": context_blocks,
         "event_node": event_node
     })
 

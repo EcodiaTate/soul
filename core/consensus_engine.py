@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timezone
 
 from core.graph_io import (
-    write_consensus_to_graph as graph_write_consensus,
+    write_consensus_to_graph,
     get_event_by_id,
     create_relationship,
     vector_search,
@@ -140,7 +140,7 @@ def consensus_pipeline(event_id, agent_responses):
         consensus = build_consensus(agent_responses)
         from core.agents import serialize_agent_response
         consensus_serialized = serialize_agent_response(consensus)
-        node = graph_write_consensus(consensus_serialized)
+        node = write_consensus_to_graph(consensus_serialized)
         action_plan = consensus.get("action_plan")
 
         # --- Actuator Trigger ---

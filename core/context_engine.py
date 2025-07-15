@@ -1,96 +1,80 @@
 import os
-import openai
-from dotenv import load_dotenv
-from .graph_io import (
-    get_unprocessed_event_nodes,
-    mark_event_processed,
-)
-from core.value_vector import get_current_value_pool, get_value_schema_version
-import json
-import logging
+from core.llm import llm_func
+from core.prompts import contextualization_prompt
+from core.vector_utils import embed_text
+from core.neo4j import store_memory_block
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
 
-EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
-LLM_MODEL = os.environ.get("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+def compress_event_with_llm(event, agent_id):
+    """
+    Compress a full event into a set of memory blocks (summary, insight, mood).
+    """
+    context_text = f"Event:\n{event['raw_text']}\n\nMetadata:\n{event.get('metadata', {})}"
+    prompt = contextualization_prompt.format(text=context_text)
 
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
-
-def process_new_events():
-    events = get_unprocessed_event_nodes()
-    value_pool = get_current_value_pool()
-    schema_version = get_value_schema_version()
-    if not events:
-        logging.info("[context_engine] No new events to process.")
-        return
-    for ev in events:
-        node_id = ev['id']
-        raw_text = ev['raw_text']
-        try:
-            context = compress_event_with_llm(raw_text, value_pool, schema_version)
-            if not context:
-                raise Exception("LLM returned empty context.")
-            context_str = json.dumps(context, ensure_ascii=False)
-            embedding = embed_text(context_str)
-            if not embedding or not isinstance(embedding, list) or sum(abs(x) for x in embedding) < 1e-6:
-                raise Exception("Embedding failed or returned near-zero vector.")
-            mark_event_processed(node_id, context, embedding)
-            logging.info(f"[context_engine] Processed event {node_id}: compressed, embedded, and marked as processed.")
-        except Exception as e:
-            logging.error(f"[context_engine] ERROR processing event {node_id}: {e}")
-
-def compress_event_with_llm(raw_text, value_pool, schema_version):
-    pool_str = ', '.join([f'"{v}"' for v in value_pool])
-    prompt = (
-        "You are a high-compression context extractor for an AI memory graph. "
-        f"Extract the main actors, actions, topics, decisions, and score each of these values (to 3 decimals) as floats 0.000-10.000: [{pool_str}]. "
-        "Respond ONLY with valid JSON as:\n"
-        '{"actors": [], "actions": [], "topics": [], "decision": "", '
-        f'"value_vector": {{"{value_pool[0]}": 0.000}}, "value_schema_version": "{schema_version}", "keypoints": []}}\n'
-        f"Input: {raw_text}"
+    response = llm_func(
+        prompt=prompt,
+        agent_id=agent_id,
+        system="compress_context",
+        temperature=0.4,
+        max_tokens=512,
     )
-    try:
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "system", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.0,
-            max_tokens=384
+
+    blocks = extract_memory_blocks(response)
+    embedded_blocks = []
+
+    for block in blocks:
+        embedding = embed_text(block["text"])
+        block_node = store_memory_block(
+            event_id=event["id"],
+            text=block["text"],
+            type=block["type"],
+            embedding=embedding,
+            agent_id=agent_id,
         )
-        text = response.choices[0].message.content
-        context = json.loads(text)
-        return context
-    except Exception as e:
-        logging.error(f"[compress_event_with_llm] ERROR for input: {raw_text[:80]}... | {e}")
-        return None
+        embedded_blocks.append(block_node)
 
-def embed_text(context_text):
-    try:
-        resp = client.embeddings.create(input=[context_text], model=EMBED_MODEL)
-        embedding = resp.data[0].embedding
-        if not embedding:
-            raise Exception("Embedding result empty.")
-        return embedding
-    except Exception as e:
-        logging.error(f"[embed_text] ERROR: {e}")
-        return None
+    return embedded_blocks
 
-def process_single_event(event_id, raw_text, value_pool=None, schema_version=None):
-    if value_pool is None:
-        value_pool = get_current_value_pool()
-    if schema_version is None:
-        schema_version = get_value_schema_version()
-    try:
-        context = compress_event_with_llm(raw_text, value_pool, schema_version)
-        if not context:
-            raise Exception("LLM returned empty context.")
-        context_str = json.dumps(context, ensure_ascii=False)
-        embedding = embed_text(context_str)
-        if not embedding or not isinstance(embedding, list) or sum(abs(x) for x in embedding) < 1e-6:
-            raise Exception("Embedding failed or returned near-zero vector.")
-        mark_event_processed(event_id, context, embedding)
-        logging.info(f"[context_engine] Processed single event {event_id}")
-    except Exception as e:
-        logging.error(f"[context_engine] ERROR processing single event {event_id}: {e}")
+
+def extract_memory_blocks(response_text):
+    """
+    Parse LLM response into block objects. Each block must include a 'type' and 'text'.
+    Assumes response is structured like:
+    [Summary]
+    ...
+    [Insight]
+    ...
+    [Mood]
+    ...
+    """
+    blocks = []
+    current_type = None
+    buffer = []
+
+    for line in response_text.splitlines():
+        if line.strip().startswith("[") and line.strip().endswith("]"):
+            if current_type and buffer:
+                blocks.append({
+                    "type": current_type.lower(),
+                    "text": "\n".join(buffer).strip()
+                })
+            current_type = line.strip().strip("[]")
+            buffer = []
+        else:
+            buffer.append(line)
+
+    if current_type and buffer:
+        blocks.append({
+            "type": current_type.lower(),
+            "text": "\n".join(buffer).strip()
+        })
+
+    return blocks
+
+
+def get_context_blocks(event, agent_id, max_tokens=512):
+    """
+    Public interface for generating context blocks from an event.
+    """
+    return compress_event_with_llm(event, agent_id)

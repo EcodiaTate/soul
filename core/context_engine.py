@@ -18,7 +18,7 @@ LLM_MODEL = os.environ.get("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# -------------------- CORE --------------------
+# -------------------- MAIN --------------------
 
 def process_new_events():
     events = get_unprocessed_event_nodes()
@@ -90,7 +90,11 @@ def embed_text(context_text):
         logging.error(f"[embed_text] ERROR: {e}")
         return None
 
-# -------------------- CHAT CONTEXT BLOCKS --------------------
+# -------------------- CHAT CONTEXT --------------------
+
+def load_relevant_context(vector):
+    # TODO: vector search integration here
+    return []
 
 def format_context_blocks(blocks):
     """

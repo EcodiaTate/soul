@@ -10,10 +10,21 @@ from core import (
     memory_engine,
     socket_handlers
 )
-from core.chat_agent import generate_chat_reply
+from core.llm_tools import run_llm
 from core.socket_handlers import emit_new_event, emit_chat_response
 
 chat_bp = Blueprint('chat', __name__)
+
+def generate_claude_chat_reply(raw_text, context_blocks):
+    """
+    Generates a fast chat reply using Claude via llm_tools, always with purpose='chat'.
+    """
+    # Build your prompt as per your prompt template system
+    prompt = f"USER: {raw_text}\n\nCONTEXT:\n" + "\n".join(
+        [f"- {block['summary']}" for block in context_blocks]
+    )
+    reply = run_llm(prompt, agent="claude", purpose="chat")
+    return reply
 
 @chat_bp.route('/api/chat', methods=['POST'])
 def submit_chat():
@@ -40,13 +51,17 @@ def submit_chat():
     graph_io.embed_vector_in_node(event_id, vector)
     context_blocks = context_engine.load_relevant_context(vector)
 
-    # --- Generate Fast Chat Reply ---
+    # --- Generate Fast Chat Reply (Claude only) ---
     try:
-        chat_reply = generate_chat_reply(raw_text, context_blocks)
-        emit_chat_response({"id": event_id, "reply": chat_reply})
+        fast_reply = generate_claude_chat_reply(raw_text, context_blocks)
+        emit_chat_response({
+            "id": event_id,
+            "reply_type": "fast",  # Explicitly labeled for UI
+            "reply": fast_reply
+        })
     except Exception as e:
-        print(f"[chat] Failed to generate fast chat reply: {e}")
-        chat_reply = "..."
+        print(f"[chat] Failed to generate fast chat reply (Claude): {e}")
+        fast_reply = "..."
 
     # --- Full Agent Mesh ---
     agent_responses = agents.run_all_agents({
@@ -86,6 +101,7 @@ def submit_chat():
     emit_new_event({"id": event_id, "text": raw_text})
     emit_chat_response({
         "id": event_id,
+        "reply_type": "full",  # Labeled for UI
         "summary": pipeline_result_ui.get("rationale") or peer_review_result_ui.get("status") or "No consensus yet.",
         "pipeline_result": pipeline_result_ui,
         "peer_review": peer_review_result_ui,
@@ -96,6 +112,7 @@ def submit_chat():
     return jsonify({
         "status": "ok",
         "event_id": event_id,
+        "fast_reply": fast_reply,  # Optional, for UI
         "agent_responses": agent_responses_ui,
         "pipeline_result": pipeline_result_ui,
         "peer_review": peer_review_result_ui,

@@ -137,7 +137,7 @@ def run_llm_emotion_vector(event, agent="unknown"):
 # --- Peer review (Claude) ---
 def llm_peer_review(agent_prior, peer_outputs, value_axes, emotion_axes, agent="unknown"):
     prompt = peer_review_prompt(
-        get_ecodia_identity(),
+        #get_ecodia_identity(),
         agent_prior,
         peer_outputs,
         value_axes,
@@ -148,7 +148,7 @@ def llm_peer_review(agent_prior, peer_outputs, value_axes, emotion_axes, agent="
 # --- Consensus/CE synthesis (Gemini) ---
 def llm_consensus(agent_rationales, value_axes):
     prompt = consensus_prompt(
-        get_ecodia_identity(),
+        #get_ecodia_identity(),
         agent_rationales,
         value_axes
     )

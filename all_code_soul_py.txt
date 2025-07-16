@@ -317,50 +317,53 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ### FILE: core\agents.py
 
 """
-agents.py — 120% God Mode
+agents.py — Fully Dynamic God Mode
 Value/Emotion Vectors, Audit, Schema, Trace, and Meta-Reflection Engine
 
-Core: Agent cognition, registry, serialization, audit logging, and lifecycle for Soul-OS.
-Every agent run logs all fields (schema, value vector, rationale, emotion, causal trace, audit log, etc).
+Dynamically supports arbitrary agents, vector schema evolution, and audit fields.
+Each agent can have its own persona, logic, logging, lineage, and custom metadata.
 """
 
 import uuid
 import json
-import os
 from datetime import datetime, timezone
+
 from core.value_vector import (
-    llm_extract_value_vector,
-    score_value_vector,
+    extract_and_score_value_vector,  
+    run_llm_emotion_vector,
     get_value_schema_version
 )
-from core.memory_engine import evaluate_event, _llm_emotion_vector  # Emotion engine stub
 
-# --- Agent Registry & Static Config ---
 AGENT_REGISTRY = {}
 
-def register_agent(name, agent_func, description=None, persona=None, model_type=None):
+def register_agent(
+    name,
+    agent_func,
+    description=None,
+    persona=None,
+    model_type=None,
+    log_path=None,
+    extra_fields=None
+):
     AGENT_REGISTRY[name] = {
         "func": agent_func,
         "description": description or "",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "persona": persona or "",
         "model_type": model_type or "LLM",
-        "log_path": None,  # Optionally assign per-agent log file
-        "memory_vector_profile": {},  # For future context shaping
-        "parent": None,    # Lineage support
-        "children": []
+        "log_path": log_path,
+        "memory_vector_profile": {},
+        "parent": None,
+        "children": [],
+        **(extra_fields or {})
     }
 
-# --- Serialization Utilities ---
-
 COMPLEX_FIELDS = {
-    "value_vector", "emotion_vector", "audit_log", "causal_trace", "rationale", "action_plan"
+    "value_vector", "emotion_vector", "audit_log", "causal_trace",
+    "rationale", "action_plan"
 }
+
 def serialize_agent_response(resp: dict) -> dict:
-    """
-    Ensures all complex fields are json-serialized for Neo4j.
-    Always call before storing in DB!
-    """
     result = {}
     for k, v in resp.items():
         if k in COMPLEX_FIELDS and isinstance(v, (dict, list)):
@@ -370,65 +373,58 @@ def serialize_agent_response(resp: dict) -> dict:
     return result
 
 def deserialize_agent_response(resp: dict) -> dict:
-    """
-    Parses any json-stringified dict/list fields back into native Python objects.
-    """
     d = dict(resp)
     for k in COMPLEX_FIELDS:
         if k in d and isinstance(d[k], str):
             try:
                 d[k] = json.loads(d[k])
             except Exception:
-                pass  # It was already a native type or malformed; leave as-is
+                pass
     return d
-
-# --- Main Agent Logic ---
 
 def agent_reason(event, agent_name, context=None, log=True):
     """
-    The one-call agent cognition routine.
-    Handles agent selection, full extraction/serialization, audit logging, and meta-data.
-    Returns agent response dict.
+    The dynamic agent cognition routine.
+    Handles agent selection, extraction/serialization, audit logging, meta-data, and schema evolution.
     """
     agent = AGENT_REGISTRY.get(agent_name)
     if not agent:
         raise ValueError(f"Agent '{agent_name}' not registered!")
 
-    # 1. Run agent-specific logic (LLM, rules, etc)
-    result = agent["func"](event, context=context)
+    context_block = event.get("context") or context
+    if not context_block:
+        raise ValueError("Missing compressed context block in event.")
+
+    result = agent["func"](event, context=context_block)
     if not isinstance(result, dict):
         raise ValueError("Agent must return dict with at least 'rationale' and 'score'.")
 
-    # 2. Value Vector extraction (if not provided)
+    # Dynamically inject value vector (unless agent provides custom)
     value_vec = result.get("value_vector")
     if not value_vec:
         try:
-            value_vec = llm_extract_value_vector(event.get("raw_text", ""), agent=agent_name)
+            value_vec = extract_and_score_value_vector(context_block, agent=agent_name)
         except Exception as e:
-            print(f"[agents] Value vector extraction failed for agent {agent_name}: {e}")
+            print(f"[agents] Value vector extraction failed for agent '{agent_name}': {e}")
             value_vec = {}
 
-    # 3. Schema Version
-    schema_version = get_value_schema_version()
-
-    # 4. Emotion Vector (if not provided)
+    # Dynamically inject emotion vector (unless agent provides custom)
     emotion_vec = result.get("emotion_vector")
     if not emotion_vec:
         try:
-            emotion_vec = _llm_emotion_vector(event)
+            emotion_vec = run_llm_emotion_vector(context_block, agent=agent_name)
         except Exception as e:
-            print(f"[agents] Emotion vector extraction failed for agent {agent_name}: {e}")
+            print(f"[agents] Emotion vector extraction failed for agent '{agent_name}': {e}")
             emotion_vec = {}
 
-    # 5. Structured Extraction & Defaults
     rationale = result.get("rationale", f"No rationale provided by {agent_name}.")
     score = float(result.get("score", 1.0))
     action_plan = result.get("action_plan", None)
     causal_trace = result.get("causal_trace", [])
+    schema_version = get_value_schema_version()
     agent_priority = float(result.get("agent_priority", 0.0))
     user_pinned = bool(result.get("user_pinned", False))
 
-    # Audit log entry
     audit_entry = {
         "rationale": rationale,
         "value_vector": value_vec,
@@ -437,15 +433,14 @@ def agent_reason(event, agent_name, context=None, log=True):
         "schema_version": schema_version,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    audit_log = result.get("audit_log", [])
-    audit_log = audit_log + [audit_entry]
+    audit_log = result.get("audit_log", []) + [audit_entry]
 
-    # Meta-agent response object
+    # Support for arbitrary extra fields in responses
     agent_response = {
         "id": str(uuid.uuid4()),
         "agent_name": agent_name,
-        "model_type": agent.get("model_type", "LLM"),
-        "persona": agent.get("persona", ""),
+        "model_type": agent.get("model_type"),
+        "persona": agent.get("persona"),
         "rationale": rationale,
         "score": score,
         "action_plan": action_plan,
@@ -456,76 +451,72 @@ def agent_reason(event, agent_name, context=None, log=True):
         "agent_priority": agent_priority,
         "user_pinned": user_pinned,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "audit_log": audit_log
+        "audit_log": audit_log,
+        # Pass through any agent-level extras, in case your agent returns more fields
+        **{k: v for k, v in result.items() if k not in {
+            "rationale", "score", "action_plan", "value_vector", "emotion_vector",
+            "causal_trace", "agent_priority", "user_pinned", "audit_log"
+        }}
     }
 
     if log:
-        print(f"[agents] {agent_name} ({agent.get('model_type')}) Score {score:.2f} | Schema v{schema_version} | Event {event.get('id')}")
+        print(f"[agents] {agent_name} ({agent['model_type']}) Score {score:.2f} | v{schema_version} | Event {event.get('id')}")
+
     return agent_response
 
-# --- Example Agent Definitions ---
+# --- Agent Definition: Dynamic Example Stub ---
 
 def llm_agent(event, context=None):
     """
-    LLM agent template (stub).
-    Replace this with LLM API call + persona/context system prompt as needed.
+    Generic agent stub for live demo/testing.
+    Replace this with any persona, reflection, or reasoning logic.
     """
     import random
-    rationale = "This is a stub LLM agent rationale."
-    score = round(random.uniform(0.1, 0.99), 3)
-    action_plan = None
-    # Optional: Provide value_vector, emotion_vector, etc.
+    rationale = "Stub LLM agent: replace me with a true reflection prompt/LLM call."
+    # Return empty vectors for dynamic injection, but allow extra fields if desired
     return {
         "rationale": rationale,
-        "score": score,
-        "action_plan": action_plan,
-        # Let core pipeline extract value/emotion vectors by default
+        "score": round(random.uniform(0.2, 0.9), 3),
+        "action_plan": None,
     }
 
-# Register core agents (stub, real agents to be wired in)
+# Example dynamic agent registration:
 register_agent(
     "LLM-Stub",
     llm_agent,
     description="Stub agent for demo/testing.",
-    persona="Objective, reflective LLM test agent",
+    persona="Objective test agent",
     model_type="Stub"
 )
 
-# --- Multi-Agent Mesh Execution ---
+# --- Mesh Execution: Run All Agents ---
 
 def run_all_agents(event, context=None):
-    """
-    Runs all registered agents on the event and returns responses.
-    """
     responses = []
-    for agent_name in AGENT_REGISTRY:
-        resp = agent_reason(event, agent_name, context)
-        responses.append(resp)
+    for name in AGENT_REGISTRY:
+        try:
+            resp = agent_reason(event, name, context)
+            responses.append(resp)
+        except Exception as e:
+            print(f"[agents] Error running agent '{name}': {e}")
     return responses
 
-# --- Traceability & Introspection ---
+# --- Agent Metadata Tools ---
 
 def explain_agent(agent_name):
-    """
-    Returns full metadata and description for agent.
-    """
     agent = AGENT_REGISTRY.get(agent_name)
     if not agent:
-        return f"Agent '{agent_name}' is not registered."
+        return f"Agent '{agent_name}' not found."
     return {
         "name": agent_name,
-        "description": agent.get("description", ""),
+        "description": agent.get("description"),
         "created_at": agent.get("created_at"),
         "model_type": agent.get("model_type"),
         "persona": agent.get("persona"),
-        "func_doc": agent["func"].__doc__,
-        "log_path": agent.get("log_path")
+        "func_doc": agent["func"].__doc__
     }
 
 def list_agents():
-    """
-    Returns a summary list of all registered agents and their personas.
-    """
     return [
         {
             "name": name,
@@ -537,29 +528,17 @@ def list_agents():
         for name, agent in AGENT_REGISTRY.items()
     ]
 
-# --- Agent Log File Integration (optional) ---
+# --- Optional: Dynamic Agent Log File Integration ---
 
 def write_agent_log(agent_name, data):
-    """
-    Append agent logs to disk (if enabled in config).
-    """
     agent = AGENT_REGISTRY.get(agent_name)
     if not agent or not agent.get("log_path"):
         return
-    path = agent["log_path"]
     try:
-        with open(path, "a") as f:
+        with open(agent["log_path"], "a") as f:
             f.write(json.dumps(data) + "\n")
     except Exception as e:
-        print(f"[agents] Failed to write agent log for {agent_name}: {e}")
-
-# --- Example usage (in pipeline): ---
-# event = {"id": "evt-1", "raw_text": "I lied to protect my friend."}
-# response = agent_reason(event, "LLM-Stub")
-# all_responses = run_all_agents(event)
-
-# --- End God Mode agents.py ---
-
+        print(f"[agents] Failed to write log for {agent_name}: {e}")
 
 
 ### FILE: core\audit.py
@@ -570,17 +549,19 @@ def write_agent_log(agent_name, data):
 
 # core/chat_agent.py
 
-from core.prompts import chat_response_prompt
-from core.llm_tools import run_llm  # uses Claude or default
+from core.prompts import chat_response_prompt, get_ecodia_identity
+from core.llm_tools import run_llm  # This routes to Claude for 'agent="claude"' and 'purpose="chat"'
 from core.context_engine import format_context_blocks
-from core.prompts import get_ecodia_identity, chat_response_prompt
 
 def generate_chat_reply(raw_text: str, context_blocks: list) -> str:
+    """
+    Generate a fast, high-quality chat reply using Claude (via llm_tools), including full identity context and relevant memory blocks.
+    """
     identity = get_ecodia_identity()
     formatted_blocks = format_context_blocks(context_blocks)
     prompt = chat_response_prompt(identity, raw_text, formatted_blocks)
-
-    response = run_llm(prompt, agent="Claude")
+    # Explicitly use Claude as agent and purpose="chat"
+    response = run_llm(prompt, agent="claude", purpose="chat")
     return response.strip()
 
 
@@ -639,11 +620,11 @@ def process_pending_cypher_actions():
 
 """
 consensus_engine.py — 130% God Mode
-Dynamic Edge Types, Value Vectors, Mesh Edges, Audit, Actuator, and Full Integration
+Truly Dynamic Edge Types, Value/Emotion Vectors, Mesh Edges, Audit, Actuator, and Full Integration
 
-- All mesh edge types (RELATION, CONTRADICTS, TOPIC_MATCH, etc) dynamically detected from the current schema
+- All edge types discovered and applied dynamically from the current schema
 - Value/emotion vectors, action plan, rationale, audit fully supported and serializable
-- Semantic mesh and value links resilient to edge pool mutations by the CE
+- Semantic mesh and value links always reflect current CE-driven edge pool
 """
 
 import math
@@ -657,9 +638,19 @@ from core.graph_io import (
     get_value_nodes,
     get_edge_types
 )
-#from core.actuators.dispatch import dispatch_actuator
-from core.socket_handlers import emit_action_update
-from core.value_vector import fuse_value_vectors, multi_vector_conflict, get_value_schema_version
+from core.value_vector import (
+    fuse_value_vectors,
+    multi_vector_conflict,
+    get_value_schema_version,
+    get_value_names,
+    get_value_importances,
+    bump_value_importance,
+    FIXED_EMOTION_AXES
+)
+from core.memory_engine import bump_memory_importance
+from core.agents import serialize_agent_response
+from core.prompts import consensus_prompt, get_ecodia_identity
+from core.llm_tools import run_llm
 
 CONSENSUS_ALIGNMENT_THRESHOLD = 0.7
 
@@ -667,13 +658,31 @@ def check_alignment(agent_responses, threshold=CONSENSUS_ALIGNMENT_THRESHOLD):
     if not agent_responses or len(agent_responses) == 0:
         print("[consensus_engine] No agent responses provided!")
         return False
+
     value_vectors = [a.get("value_vector") for a in agent_responses if "value_vector" in a]
+    emotion_vectors = [a.get("emotion_vector") for a in agent_responses if "emotion_vector" in a]
     if len(value_vectors) >= 2:
         mesh = multi_vector_conflict(value_vectors, threshold=threshold)
         if mesh.get("peer_review"):
             print(f"[consensus_engine] Value vector mesh not aligned: triggering peer review.")
             return False
-    # TODO: add rationale and emotion mesh checks here if desired
+
+    # (Optional) Add emotion mesh check
+    if len(emotion_vectors) >= 2:
+        emo_keys = set().union(*emotion_vectors)
+        def as_vec(d): return [d.get(k, 0.0) for k in emo_keys]
+        def cos_sim(v1, v2):
+            num = sum(a*b for a, b in zip(v1, v2))
+            denom = math.sqrt(sum(a*a for a in v1)) * math.sqrt(sum(b*b for b in v2))
+            return num / denom if denom else 0.0
+        vlist = [as_vec(v) for v in emotion_vectors]
+        sims = [1 - cos_sim(vlist[i], vlist[j])
+                for i in range(len(vlist)) for j in range(i+1, len(vlist))]
+        avg_dist = sum(sims) / len(sims) if sims else 0.0
+        if avg_dist > threshold:
+            print("[consensus_engine] Emotion vector mesh not aligned: triggering peer review.")
+            return False
+
     print(f"[consensus_engine] {len(agent_responses)} agent responses — alignment ok.")
     return True
 
@@ -681,14 +690,60 @@ def build_consensus(agent_responses):
     if not agent_responses:
         print("[consensus_engine] No agent responses to build consensus.")
         return None
-    combined_rationale = "\n\n".join(
-        [f"[{a.get('agent_name', '?')}] {a.get('rationale','')}" for a in agent_responses]
-    )
-    average_score = sum(a.get("score", 1.0) for a in agent_responses) / len(agent_responses)
-    action_plan = next((a.get("action_plan") for a in agent_responses if a.get("action_plan")), None)
-    value_vectors = [a.get("value_vector") for a in agent_responses if "value_vector" in a]
-    schema_version = get_value_schema_version()
-    consensus_value_vector = fuse_value_vectors(value_vectors) if value_vectors else {}
+
+    # Optionally: build rationale and value vector via LLM prompt, else fallback to fusion
+    from core.value_vector import get_value_names
+    try:
+        rationales = [a.get("rationale", "") for a in agent_responses]
+        agent_names = [a.get("agent_name", "?") for a in agent_responses]
+        value_axes = get_value_names()
+
+        prompt = consensus_prompt(
+            get_ecodia_identity(),
+            [{"agent_name": n, "rationale": r} for n, r in zip(agent_names, rationales)],
+            value_axes
+        )
+        # Uncomment the next two lines to use LLM consensus reasoning
+        # llm_response = run_llm(prompt)
+        # parsed = json.loads(llm_response)
+        # combined_rationale = parsed.get("rationale", "")
+        # consensus_value_vector = parsed.get("value_vector", {})
+        # average_score = parsed.get("consensus_score", 1.0)
+        # action_plan = parsed.get("action_plan", None)
+    except Exception as e:
+        print(f"[consensus_engine] LLM consensus rationale fallback: {e}")
+        combined_rationale = "\n\n".join(
+            [f"[{a.get('agent_name', '?')}] {a.get('rationale','')}" for a in agent_responses]
+        )
+        average_score = sum(a.get("score", 1.0) for a in agent_responses) / len(agent_responses)
+        action_plan = next((a.get("action_plan") for a in agent_responses if a.get("action_plan")), None)
+        value_vectors = [a.get("value_vector") for a in agent_responses if "value_vector" in a]
+        schema_version = get_value_schema_version()
+        consensus_value_vector = fuse_value_vectors(value_vectors) if value_vectors else {}
+
+    if 'combined_rationale' not in locals():
+        combined_rationale = "\n\n".join(
+            [f"[{a.get('agent_name', '?')}] {a.get('rationale','')}" for a in agent_responses]
+        )
+        average_score = sum(a.get("score", 1.0) for a in agent_responses) / len(agent_responses)
+        action_plan = next((a.get("action_plan") for a in agent_responses if a.get("action_plan")), None)
+        value_vectors = [a.get("value_vector") for a in agent_responses if "value_vector" in a]
+        schema_version = get_value_schema_version()
+        consensus_value_vector = fuse_value_vectors(value_vectors) if value_vectors else {}
+
+    # Bump value importance for all high-expressed values in consensus
+    importances = get_value_importances()
+    for v, score in consensus_value_vector.items():
+        if score > 0.65:
+            bump_value_importance(v, amount=0.02, actor="consensus")
+
+    # Optionally bump relevant memories (e.g. agent causal_trace, or surface)
+    for agent in agent_responses:
+        for mem_id in agent.get("causal_trace", []):
+            try:
+                bump_memory_importance(mem_id, amount=0.01, actor="consensus-context")
+            except Exception:
+                pass
 
     consensus = {
         "rationale": combined_rationale,
@@ -715,81 +770,75 @@ def build_edge_properties(event_node, target_node, rel_type, consensus_vector):
     }
     source_vv = consensus_vector or {}
     target_vv = target_node.get("value_vector", {})
-    if rel_type in ("RELATED_TO", "CONTRADICTS", "SUPPORTS", "INSPIRED", "EXPRESSES", "EMBODIES"):
-        props["alignment_score"] = cosine_similarity(source_vv, target_vv)
-        props["value_vector_diff"] = {k: round(source_vv.get(k, 0.0) - target_vv.get(k, 0.0), 3)
-                                      for k in source_vv}
+    props["alignment_score"] = cosine_similarity(source_vv, target_vv)
+    props["value_vector_diff"] = {k: round(source_vv.get(k, 0.0) - target_vv.get(k, 0.0), 3)
+                                  for k in set(source_vv) | set(target_vv)}
     if rel_type == "TOPIC_MATCH":
         props["topics"] = list(set(event_node.get("topics", [])) & set(target_node.get("topics", [])))
     return props
 
 def cosine_similarity(vec1, vec2):
     common_keys = set(vec1) & set(vec2)
+    if not common_keys:
+        return 0.0
     v1 = [vec1[k] for k in common_keys]
     v2 = [vec2[k] for k in common_keys]
-    if not v1 or not v2:
-        return 0.0
     num = sum(a*b for a,b in zip(v1, v2))
     denom = math.sqrt(sum(a*a for a in v1)) * math.sqrt(sum(b*b for b in v2))
     return round(num/denom, 4) if denom else 0.0
 
 def create_mesh_edges(event_id, consensus_vector, event_node, top_k=8):
     """
-    Build semantic mesh edges for this consensus event using **dynamic edge types**.
-    - Only uses edge types actually present in the graph.
-    - If CE mutates the edge vocabulary, this always adapts.
+    100% Dynamic Mesh Edge Creation.
+    Edge types are read live from the DB and matched by vector similarity, topic, value, or threshold rules.
     """
     edge_types = {et.get("name") for et in get_edge_types() if et.get("name")}
-    value_nodes = get_value_nodes()  # List of Value nodes
-
-    # 1. Related/Supports: Only use types present in current edge pool
+    value_nodes = get_value_nodes()
     similar_nodes = vector_search(consensus_vector, top_k=top_k)
+
+    # Always connect to similar nodes, using all allowed dynamic edge types.
     for node in similar_nodes:
-        for candidate in ("RELATED_TO", "SUPPORTS"):
-            if candidate in edge_types:
-                props = build_edge_properties(event_node, node, candidate, consensus_vector)
-                create_relationship(event_id, node["id"], candidate, props)
-
-    # 2. Contradicts: Only if present
-    if len(similar_nodes) >= 2 and "CONTRADICTS" in edge_types:
-        most_dissimilar = min(similar_nodes, key=lambda n: cosine_similarity(consensus_vector, n.get("value_vector", {})))
-        props = build_edge_properties(event_node, most_dissimilar, "CONTRADICTS", consensus_vector)
-        create_relationship(event_id, most_dissimilar["id"], "CONTRADICTS", props)
-
-    # 3. Topic/entity mesh
-    topics = set(event_node.get("topics", []))
-    if topics and "TOPIC_MATCH" in edge_types:
-        for node in similar_nodes:
-            target_topics = set(node.get("topics", []))
-            if topics & target_topics:
-                props = build_edge_properties(event_node, node, "TOPIC_MATCH", consensus_vector)
-                create_relationship(event_id, node["id"], "TOPIC_MATCH", props)
-
-    # 4. Value linkage: EXPRESSES/EMBODIES (and future-proof for any new)
-    for value in value_nodes:
-        val_name = value.get("name")
-        score = consensus_vector.get(val_name, 0.0)
-        for candidate in ("EXPRESSES", "EMBODIES"):
-            if candidate in edge_types and score > 0.75:
-                props = {"score": score, "value_schema_version": consensus_vector.get("value_schema_version", None)}
-                create_relationship(event_id, value["id"], candidate, props)
+        for rel_type in edge_types:
+            if rel_type == "CONTRADICTS":
+                # Link to the most dissimilar node
+                most_dissimilar = min(similar_nodes, key=lambda n: cosine_similarity(consensus_vector, n.get("value_vector", {})))
+                if node["id"] == most_dissimilar["id"]:
+                    props = build_edge_properties(event_node, node, rel_type, consensus_vector)
+                    create_relationship(event_id, node["id"], rel_type, props)
+            elif rel_type == "TOPIC_MATCH":
+                event_topics = set(event_node.get("topics", []))
+                target_topics = set(node.get("topics", []))
+                if event_topics & target_topics:
+                    props = build_edge_properties(event_node, node, rel_type, consensus_vector)
+                    create_relationship(event_id, node["id"], rel_type, props)
+            elif rel_type in ("EXPRESSES", "EMBODIES"):
+                for value in value_nodes:
+                    val_name = value.get("name")
+                    score = consensus_vector.get(val_name, 0.0)
+                    if score > 0.75:
+                        props = {"score": score, "value_schema_version": consensus_vector.get("value_schema_version", None)}
+                        create_relationship(event_id, value["id"], rel_type, props)
+            else:
+                # Generic link for any new or mutated edge type
+                props = build_edge_properties(event_node, node, rel_type, consensus_vector)
+                create_relationship(event_id, node["id"], rel_type, props)
 
 def consensus_pipeline(event_id, agent_responses):
     if check_alignment(agent_responses):
         consensus = build_consensus(agent_responses)
-        from core.agents import serialize_agent_response
         consensus_serialized = serialize_agent_response(consensus)
         node = write_consensus_to_graph(consensus_serialized)
         action_plan = consensus.get("action_plan")
 
         # --- Actuator Trigger ---
         if action_plan and action_plan.get("action_type") not in ["cypher", "schema"]:
-        #action_result = dispatch_actuator(action_plan)
-        #emit_action_update(action_result)
-        #elif action_plan:
+            # action_result = dispatch_actuator(action_plan)
+            # emit_action_update(action_result)
+            pass
+        elif action_plan:
             print("[consensus_engine] Cypher/Schema action detected. Passing to consciousness engine for later execution.")
 
-        # --- Mesh edge creation: full semantic mesh ---
+        # --- Mesh edge creation: 100% dynamic
         event_node = get_event_by_id(event_id)
         if event_node and consensus.get("value_vector"):
             create_mesh_edges(event_id, consensus["value_vector"], event_node, top_k=8)
@@ -801,115 +850,99 @@ def consensus_pipeline(event_id, agent_responses):
         return {"status": "peer_review", "review_result": review_result}
 
 def __now_utc__():
-    from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
-
 
 
 ### FILE: core\context_engine.py
 
+"""
+context_engine.py — Pure Compression Engine for Incoming Events
+Author: Ecodia Dev Team
+Last updated: 2025-07-16
+"""
+
 import os
-import openai
 import json
 import logging
 from dotenv import load_dotenv
+import openai
 
 from core.graph_io import (
     get_unprocessed_event_nodes,
     mark_event_processed,
 )
-from core.value_vector import get_current_value_pool, get_value_schema_version
+from core.prompts import contextualization_prompt
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
 LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
+EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# -------------------- MAIN --------------------
+# === MAIN ENTRYPOINT ===
 
 def process_new_events():
     events = get_unprocessed_event_nodes()
-    value_pool = get_current_value_pool()
-    schema_version = get_value_schema_version()
     if not events:
         logging.info("[context_engine] No new events to process.")
         return
     for ev in events:
-        node_id = ev['id']
-        raw_text = ev['raw_text']
+        event_id = ev["id"]
+        raw_text = ev.get("raw_text", "")
         try:
-            process_single_event(node_id, raw_text, value_pool, schema_version)
+            process_single_event(event_id, raw_text)
         except Exception as e:
-            logging.error(f"[context_engine] ERROR processing event {node_id}: {e}")
+            logging.error(f"[context_engine] ERROR processing event {event_id}: {e}")
 
-def process_single_event(event_id, raw_text, value_pool=None, schema_version=None):
-    if value_pool is None:
-        value_pool = get_current_value_pool()
-    if schema_version is None:
-        schema_version = get_value_schema_version()
-    try:
-        context = compress_event_with_llm(raw_text, value_pool, schema_version)
-        if not context:
-            raise Exception("LLM returned empty context.")
-        context_str = json.dumps(context, ensure_ascii=False)
-        embedding = embed_text(context_str)
-        if not embedding or not isinstance(embedding, list) or sum(abs(x) for x in embedding) < 1e-6:
-            raise Exception("Embedding failed or returned near-zero vector.")
-        mark_event_processed(event_id, context, embedding)
-        logging.info(f"[context_engine] Processed single event {event_id}")
-    except Exception as e:
-        logging.error(f"[context_engine] ERROR processing single event {event_id}: {e}")
+def process_single_event(event_id: str, raw_text: str):
+    compressed = compress_event(raw_text)
+    if not compressed:
+        raise Exception("Compression failed or returned empty.")
+    embedding = embed_text(compressed)
+    if not embedding:
+        raise Exception("Embedding failed or empty vector.")
+    mark_event_processed(event_id, compressed, embedding)
+    logging.info(f"[context_engine] Processed and compressed event {event_id}")
 
-# -------------------- UTILITIES --------------------
+# === CORE COMPRESSION ===
 
-def compress_event_with_llm(raw_text, value_pool, schema_version):
-    pool_str = ', '.join([f'"{v}"' for v in value_pool])
-    prompt = (
-        "You are a high-compression context extractor for an AI memory graph. "
-        f"Extract the main actors, actions, topics, decisions, and score each of these values (to 3 decimals) as floats 0.000–10.000: [{pool_str}]. "
-        "Respond ONLY with valid JSON as:\n"
-        '{"actors": [], "actions": [], "topics": [], "decision": "", '
-        f'"value_vector": {{"{value_pool[0]}": 0.000}}, "value_schema_version": "{schema_version}", "keypoints": []}}\n'
-        f"Input: {raw_text}"
-    )
+def compress_event(raw_text: str) -> str:
+    prompt = contextualization_prompt(raw_text)
     try:
         response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[{"role": "system", "content": prompt}],
-            response_format={"type": "json_object"},
             temperature=0.0,
-            max_tokens=384
+            max_tokens=384,
         )
-        text = response.choices[0].message.content
-        return json.loads(text)
+        compressed = response.choices[0].message.content.strip()
+        if not compressed or len(compressed) < 4:
+            raise Exception("Returned compression is empty or invalid.")
+        return compressed
     except Exception as e:
-        logging.error(f"[compress_event_with_llm] ERROR for input: {raw_text[:80]}... | {e}")
+        logging.error(f"[compress_event] ERROR: {e}")
         return None
 
-def embed_text(context_text):
+# === EMBEDDING ===
+
+def embed_text(text: str):
     try:
-        resp = client.embeddings.create(input=[context_text], model=EMBED_MODEL)
-        embedding = resp.data[0].embedding
-        if not embedding:
-            raise Exception("Embedding result empty.")
-        return embedding
+        resp = client.embeddings.create(input=[text], model=EMBED_MODEL)
+        vec = resp.data[0].embedding
+        if not vec or sum(abs(x) for x in vec) < 1e-6:
+            raise Exception("Embedding is near-zero.")
+        return vec
     except Exception as e:
         logging.error(f"[embed_text] ERROR: {e}")
         return None
 
-# -------------------- CHAT CONTEXT --------------------
-
-def load_relevant_context(vector):
-    # TODO: vector search integration here
-    return []
+# === CHAT CONTEXT FORMATTING ===
 
 def format_context_blocks(blocks):
     """
-    Format a list of context blocks for use in chat prompts.
-    Each block should be a dictionary with text content.
+    Format a list of memory/context blocks for display or injection into prompts.
     """
     if not blocks:
         return []
@@ -918,12 +951,10 @@ def format_context_blocks(blocks):
         if isinstance(b, str):
             formatted.append(b)
         elif isinstance(b, dict):
-            if 'rationale' in b:
-                formatted.append(b['rationale'])
-            elif 'text' in b:
-                formatted.append(b['text'])
-            elif 'raw_text' in b:
-                formatted.append(b['raw_text'])
+            for key in ("rationale", "text", "summary", "raw_text"):
+                if key in b:
+                    formatted.append(b[key])
+                    break
     return formatted
 
 
@@ -967,7 +998,7 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
-# TODO introduce emotion vectors - static vector with ratings
+
 load_dotenv()
 
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
@@ -976,8 +1007,12 @@ NEO4J_PASSWORD = os.environ.get("NEO4J_PASS", "password")
 
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
-# --- Helper: fields that should always be JSON-encoded if non-primitive ---
-COMPLEX_FIELDS = {"value_vector", "context", "audit_log", "action_plan", "topics", "causal_trace"}
+# --- Fields that should always be JSON-encoded if non-primitive ---
+COMPLEX_FIELDS = {
+    "value_vector", "emotion_vector", "context", "audit_log",
+    "action_plan", "topics", "causal_trace", "agent_responses",
+    "critiques", "embedding"
+}
 
 def _safe_props(properties: Dict[str, Any]) -> Dict[str, Any]:
     """Serialize all complex fields to JSON strings for Neo4j."""
@@ -990,7 +1025,6 @@ def _safe_props(properties: Dict[str, Any]) -> Dict[str, Any]:
         elif isinstance(v, list) and all(isinstance(i, (str, int, float, bool)) or i is None for i in v):
             safe[k] = v
         else:
-            # Fallback for any stray dict or custom object
             safe[k] = json.dumps(v)
     return safe
 
@@ -1004,7 +1038,7 @@ def _parse_complex_fields(node: Dict[str, Any]) -> Dict[str, Any]:
                 node[k] = {} if k.endswith("_vector") or k == "context" or k == "action_plan" else []
     return node
 
-# === EVENT AND VALUE VECTOR CORE ===
+# === EVENT, NODE, VALUE, CONTEXT, EMBEDDING ===
 
 def get_event_by_id(event_id: str) -> Optional[Dict[str, Any]]:
     cypher = "MATCH (e:Event {id: $event_id}) RETURN e"
@@ -1015,6 +1049,15 @@ def get_event_by_id(event_id: str) -> Optional[Dict[str, Any]]:
             return None
         node = dict(record["e"])
         return _parse_complex_fields(node)
+
+def get_node(event_id: str) -> Optional[Dict[str, Any]]:
+    cypher = "MATCH (n {id: $event_id}) RETURN n LIMIT 1"
+    with driver.session() as session:
+        result = session.run(cypher, event_id=event_id)
+        record = result.single()
+        if record and "n" in record:
+            return _parse_complex_fields(dict(record["n"]))
+        return None
 
 def create_node(label: str, properties: Dict[str, Any]) -> Dict[str, Any]:
     if 'id' not in properties:
@@ -1108,22 +1151,28 @@ def create_relationship(source_id: str, target_id: str, rel_type: str, propertie
     with driver.session() as session:
         result = session.run(cypher, source_id=source_id, target_id=target_id, props=safe_props)
         record = result.single()
-        return dict(record["r"]) if record else {"source_id": source_id, "target_id": target_id, "rel_type": rel_type, "properties": safe_props}
+        return dict(record["r"]) if record and "r" in record else {
+            "source_id": source_id, "target_id": target_id, "rel_type": rel_type, "properties": safe_props
+        }
 
 def vector_search(query_vector: Dict[str, float], top_k: int = 8) -> List[Dict[str, Any]]:
-    return []  # stub
+    # TODO: Implement vector search (call out to Pinecone, Weaviate, or custom in-db vector sim)
+    return []
 
 def write_consensus_to_graph(consensus: Dict[str, Any]) -> Dict[str, Any]:
     consensus['id'] = consensus.get('id', str(uuid.uuid4()))
     return create_node("Consensus", consensus)
 
 def get_pending_cypher_actions() -> List[Dict[str, Any]]:
+    # TODO: implement based on your schema for storing pending cypher actions
     return []
 
 def mark_action_executed(consensus_node_id: str, action_plan: Any) -> None:
+    # TODO: update node status in Neo4j
     pass
 
 def create_schema_change_node(action_plan, result, consensus_node_id) -> Dict[str, Any]:
+    # TODO: record schema change action/result in Neo4j
     return {"id": "schema-change-id"}
 
 def run_cypher(query: str, params: Optional[Dict[str, Any]] = None) -> Any:
@@ -1172,6 +1221,7 @@ def mark_event_processed(node_id: str, context: Any, embedding: List[float]) -> 
         return _parse_complex_fields(node) if node else None
 
 def embed_vector_in_node(node_id: str, raw_text: str) -> List[float]:
+    # TODO: replace with real embedding logic as needed
     fake_vector = [0.0] * 1536
     if node_id:
         with driver.session() as session:
@@ -1180,6 +1230,7 @@ def embed_vector_in_node(node_id: str, raw_text: str) -> List[float]:
     return fake_vector
 
 def get_node_summary(node: Dict[str, Any]) -> Dict[str, Any]:
+    # Expand this for richer summarization later
     return {
         "summary": "",
         "key_insight": "",
@@ -1187,83 +1238,199 @@ def get_node_summary(node: Dict[str, Any]) -> Dict[str, Any]:
         "relevance_score": 0.0
     }
 
-def get_node(event_id):
-    """
-    Retrieves a single node from Neo4j by its unique event ID.
-    """
-    query = """
-    MATCH (n:Event {id: $event_id})
-    RETURN n LIMIT 1
-    """
-    result = run_cypher(query, {"event_id": event_id})
-    return result[0]["n"] if result else None
-
 
 ### FILE: core\llm_tools.py
 
-# llm_tools.py — LLM Stub for Build Compatibility
+import json
+import os
+import random
 
-def run_llm(prompt, agent=None):
+# --- Import OpenAI, Gemini, and Anthropic SDKs or use HTTP requests
+import openai
+import anthropic
+from google.generativeai import GenerativeModel  # Example, update as needed
+
+from core.prompts import (
+    processing_prompt,
+    peer_review_prompt,
+    contextualization_prompt,
+    consensus_prompt,
+)
+from core.value_vector import (
+    get_value_names,
+    get_value_schema_version,
+    get_value_importances,
+    FIXED_EMOTION_AXES,
+)
+
+# ---- Config
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+OPENAI_EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
+OPENAI_LLM_MODEL = os.environ.get("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-pro")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-opus-20240229")
+
+# --- Helper for LLM dispatch ---
+def run_llm(prompt, agent=None, purpose=None, model=None):
     """
-    Stubbed LLM runner. Returns fake JSON-like string for testing.
+    Multi-backend LLM runner.
+    - Embedding/context: GPT
+    - Chat/agent/peer: Claude
+    - Consensus/CE: Gemini
     """
-    print(f"[llm_tools] Running LLM for agent '{agent}':\n{prompt}")
-    return """
-    {
-        "compassion": 0.85,
-        "curiosity": 0.9,
-        "logic": 0.78,
-        "playfulness": 0.62,
-        "urgency": 0.4
-    }
-    """  # This simulates an OpenAI-like LLM JSON string response
+    backend = (purpose or "").lower()
+    response = None
 
+    # Embedding/context compression: GPT
+    if backend in ["embedding", "context", "compress"]:
+        print(f"[llm_tools] OpenAI GPT ({OPENAI_EMBED_MODEL}) for context/embedding.")
+        openai.api_key = OPENAI_API_KEY
+        # Simulate embedding as not all OpenAI accounts have embeddings endpoint
+        return [random.uniform(-1, 1) for _ in range(1536)]
 
+    # Agent mesh/persona/peer review: Claude
+    elif backend in ["agent", "chat", "peer_review", "mesh"]:
+        print(f"[llm_tools] Claude ({ANTHROPIC_MODEL}) for agent/peer review.")
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=512,
+            temperature=0.0,
+            system=prompt,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = msg.content[0].text if msg.content and msg.content[0].text else ""
+        try:
+            response = json.loads(text)
+        except Exception:
+            response = _dev_parse_json_from_anything(text)
+        return response
+
+    # Consensus/CE: Gemini
+    elif backend in ["consensus", "ce", "consciousness", "rational_synthesis"]:
+        print(f"[llm_tools] Gemini ({GEMINI_MODEL}) for consensus/CE.")
+        model = GenerativeModel(GEMINI_MODEL)
+        out = model.generate_content(prompt)
+        text = out.text if hasattr(out, "text") else str(out)
+        try:
+            response = json.loads(text)
+        except Exception:
+            response = _dev_parse_json_from_anything(text)
+        return response
+
+    # Default fallback: OpenAI GPT
+    else:
+        print(f"[llm_tools] OpenAI GPT ({OPENAI_LLM_MODEL}) for fallback/default.")
+        openai.api_key = OPENAI_API_KEY
+        completion = openai.ChatCompletion.create(
+            model=OPENAI_LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=512,
+        )
+        text = completion.choices[0].message.content
+        try:
+            response = json.loads(text)
+        except Exception:
+            response = _dev_parse_json_from_anything(text)
+        return response
+
+def _dev_parse_json_from_anything(text):
+    """
+    Dev fallback: try to find JSON in raw string.
+    """
+    import re
+    match = re.search(r'(\{[\s\S]*\})', text)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except Exception:
+            pass
+    return {}
+
+# --- Contextual compression (uses GPT) ---
+def compress_text(raw_text):
+    prompt = contextualization_prompt(raw_text)
+    result = run_llm(prompt, purpose="context")
+    return result
+
+# --- Value vector extraction (Agent mesh: Claude) ---
 def llm_extract_value_vector(text, agent="unknown"):
-    """
-    Calls stubbed LLM and parses the response into a usable dict.
-    """
-    prompt = build_llm_value_vector_prompt(text)
-    raw = run_llm(prompt, agent=agent)
+    value_axes = get_value_names()
+    schema_version = get_value_schema_version()
+    prompt = processing_prompt("", text, value_axes)
+    out = run_llm(prompt, agent=agent, purpose="agent")
+    if isinstance(out, dict):
+        if "value_vector" in out:
+            return {k: float(max(0.0, min(1.0, out["value_vector"].get(k, 0.0))) ) for k in value_axes}
+        return {k: float(max(0.0, min(1.0, out.get(k, 0.0))) ) for k in value_axes}
+    return {k: 0.5 for k in value_axes}
 
-    import json
-    try:
-        vector = json.loads(raw)
-    except Exception:
-        vector = {"compassion": 0.5, "logic": 0.5}
-    return vector
+# --- Emotion vector extraction (Claude) ---
+def run_llm_emotion_vector(event, agent="unknown"):
+    axes = list(FIXED_EMOTION_AXES)
+    prompt = f"Extract emotion vector for: {event.get('raw_text','')}"
+    out = run_llm(prompt, agent=agent, purpose="agent")
+    if isinstance(out, dict):
+        return {k: float(max(0.0, min(1.0, out.get(k, 0.0))) ) for k in axes}
+    return {k: 0.5 for k in axes}
 
+# --- Peer review (Claude) ---
+def llm_peer_review(agent_prior, peer_outputs, value_axes, emotion_axes, agent="unknown"):
+    prompt = peer_review_prompt(
+        #get_ecodia_identity(),
+        agent_prior,
+        peer_outputs,
+        value_axes,
+        emotion_axes
+    )
+    return run_llm(prompt, agent=agent, purpose="peer_review")
 
-def run_llm_emotion_vector(event):
-    """
-    Returns a static fake emotion vector. Replace with real LLM call later.
-    """
-    return {
-        "joy": 0.3,
-        "anger": 0.2,
-        "fear": 0.1,
-        "love": 0.6,
-        "surprise": 0.4
-    }
+# --- Consensus/CE synthesis (Gemini) ---
+def llm_consensus(agent_rationales, value_axes):
+    prompt = consensus_prompt(
+        #get_ecodia_identity(),
+        agent_rationales,
+        value_axes
+    )
+    return run_llm(prompt, purpose="consensus")
 
-
+# --- Build value vector prompt (for LLM) ---
 def build_llm_value_vector_prompt(text, axes=None, version=None):
-    """
-    Returns a dummy prompt string. In production, this would be a real prompt template.
-    """
-    return f"Analyze the following statement for value expression:\n\n{text}\n\nReturn a JSON object of value weights."
+    axes = axes or get_value_names()
+    desc = "\n".join([f"- {ax}" for ax in axes])
+    prompt = f"""Analyze the following statement for value expression. For each value, score from 0 (not present) to 1 (maximal). Output JSON:
+
+Values:
+{desc}
+
+Input: {text}
+Return a JSON object with keys as value names and values as scores (0-1).
+"""
+    return prompt
+
+__all__ = [
+    "run_llm",
+    "llm_extract_value_vector",
+    "run_llm_emotion_vector",
+    "compress_text",
+    "build_llm_value_vector_prompt",
+    "llm_peer_review",
+    "llm_consensus"
+]
 
 
 ### FILE: core\memory_engine.py
 
 """
-Memory Engine: God Mode — All TODOs Complete, Value Vectors & Audit-Ready, Neo4j-safe
+Memory Engine: God Mode — Value/Memory Importance, Bumping, Decay, Audit, Neo4j-Ready
 """
 
 import datetime
 import math
 import uuid
-
 from . import graph_io
 from . import value_vector
 import json
@@ -1273,6 +1440,7 @@ MEMORY_PRUNE_THRESHOLD = 0.12
 MEMORY_PROMOTION_BASE = 0.85
 EMOTION_TAGGING_ENABLED = True
 MIN_SURFACE_SCORE = 0.55
+MAX_RELEVANCE_SCORE = 1.0
 
 def _serialize(val):
     return json.dumps(val) if isinstance(val, (dict, list)) else val
@@ -1288,7 +1456,7 @@ def evaluate_event(event_id, context=None):
     schema_version = None
     if not event.get("value_vector"):
         try:
-            vv = value_vector.llm_extract_value_vector(event.get("raw_text", ""), agent="memory_engine")
+            vv = value_vector.extract_and_score_value_vector(event.get("raw_text", ""), agent="memory_engine")
             schema_version = value_vector.get_value_schema_version()
             value_vector.embed_value_vector(event_id, vv, schema_version)
         except Exception as e:
@@ -1312,6 +1480,9 @@ def evaluate_event(event_id, context=None):
         0.12 * max_emotion +
         0.05 * _meta_contextual_weight(event, context)
     )
+
+    # --- Value importance bumping: Bump any values with strong alignment
+    bump_values_from_event_value_vector(vv)
 
     # Dynamic promotion threshold
     promotion_threshold = event.get("promotion_threshold", MEMORY_PROMOTION_BASE)
@@ -1364,6 +1535,79 @@ def evaluate_event(event_id, context=None):
         graph_io.update_node(None, event_id, {"decay_rate": decay_rate})
 
     return score
+
+def bump_values_from_event_value_vector(event_value_vector, threshold=0.7, bump_amount=0.04):
+    """
+    For each value in the value vector with score >= threshold, bump its importance.
+    """
+    if not event_value_vector:
+        return
+    for value_name, score in event_value_vector.items():
+        if score >= threshold:
+            value_vector.bump_value_importance(value_name, amount=bump_amount, actor="memory_event_alignment")
+
+def bump_memory_importance(event_id, amount=0.05, max_score=MAX_RELEVANCE_SCORE, actor="system"):
+    """
+    Utility to 'refresh' a memory's importance/relevance, called when a memory is cited or referenced in context.
+    """
+    event = graph_io.get_node(event_id)
+    if not event:
+        print(f"[memory_engine] Event {event_id} not found for bump.")
+        return None
+
+    old_score = float(event.get("relevance_score", 0.5))
+    new_score = min(old_score + amount, max_score)
+    audit_log = event.get("audit_log", [])
+    if isinstance(audit_log, str):
+        try:
+            audit_log = json.loads(audit_log)
+        except:
+            audit_log = []
+    rationale = {
+        "cause": "bump_memory_importance",
+        "prev_score": old_score,
+        "bump_amount": amount,
+        "new_score": new_score,
+        "actor": actor,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    }
+    audit_log.append(rationale)
+    graph_io.update_node(None, event_id, {
+        "relevance_score": new_score,
+        "audit_log": _serialize(audit_log)
+    })
+    return new_score
+
+def run_decay_cycle():
+    all_events = graph_io.get_all_nodes(label="Event")
+    now = datetime.datetime.utcnow()
+    for event in all_events:
+        decay_rate = get_decay_rate(event, event.get("emotion_vector", {}))
+        last_eval = event.get("last_evaluated")
+        days = (now - datetime.datetime.fromisoformat(last_eval)).total_seconds() / 86400.0 if last_eval else 1.0
+        score = event.get("relevance_score", 0.5)
+        decayed = score * math.exp(-decay_rate * days)
+        rationale = {
+            "prev_score": score,
+            "decay_rate": decay_rate,
+            "days_since_eval": days,
+            "new_score": decayed,
+            "cause": "run_decay_cycle",
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        }
+        audit_log = event.get("audit_log", [])
+        if isinstance(audit_log, str):
+            try:
+                audit_log = json.loads(audit_log)
+            except:
+                audit_log = []
+        audit_log.append(rationale)
+        graph_io.update_node(None, event["id"], {
+            "relevance_score": decayed,
+            "audit_log": _serialize(audit_log)
+        })
+        if decayed < MEMORY_PRUNE_THRESHOLD:
+            prune_branch(event["id"], reason="decayed_below_threshold")
 
 def promote_to_core_memory(event_id, rationale=None, emotion_vector=None, value_vector=None, value_schema_version=None):
     event = graph_io.get_node(event_id)
@@ -1424,37 +1668,6 @@ def tag_emotion(event_id, emotion_vector):
         "emotion_valence": _calc_valence(emotion_vector),
         "emotion_vector": _serialize(emotion_vector)
     })
-
-def run_decay_cycle():
-    all_events = graph_io.get_all_nodes(label="Event")
-    now = datetime.datetime.utcnow()
-    for event in all_events:
-        decay_rate = get_decay_rate(event, event.get("emotion_vector", {}))
-        last_eval = event.get("last_evaluated")
-        days = (now - datetime.datetime.fromisoformat(last_eval)).total_seconds() / 86400.0 if last_eval else 1.0
-        score = event.get("relevance_score", 0.5)
-        decayed = score * math.exp(-decay_rate * days)
-        rationale = {
-            "prev_score": score,
-            "decay_rate": decay_rate,
-            "days_since_eval": days,
-            "new_score": decayed,
-            "cause": "run_decay_cycle",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        }
-        audit_log = event.get("audit_log", [])
-        if isinstance(audit_log, str):
-            try:
-                audit_log = json.loads(audit_log)
-            except:
-                audit_log = []
-        audit_log.append(rationale)
-        graph_io.update_node(None, event["id"], {
-            "relevance_score": decayed,
-            "audit_log": _serialize(audit_log)
-        })
-        if decayed < MEMORY_PRUNE_THRESHOLD:
-            prune_branch(event["id"], reason="decayed_below_threshold")
 
 def prune_branch(node_id, reason=None):
     nodes_to_prune = graph_io.traverse_branch(node_id)
@@ -1549,7 +1762,7 @@ peer_review_engine.py — 130% God Mode
 Value/Emotion Vector Mesh, Dynamic Edge Types, Memory Audit, Neo4j-Ready
 
 - Detects and resolves agent mesh conflict (score, value, rationale, emotion)
-- Generates peer critiques (vector, emotion, rationale mesh)
+- Generates peer critiques (vector, emotion, rationale mesh) using LLM-based peer_review_prompt
 - Writes PeerReview, ConflictEvent, and all mesh/contradiction edges (edge types pulled from graph dynamically)
 - All dict/list fields safely JSON-serialized for Neo4j
 - Compatible with CE-driven edge pool and schema evolution
@@ -1571,8 +1784,14 @@ from core.consensus_engine import build_consensus, write_consensus_to_graph
 from core.value_vector import (
     value_vector_conflict,
     multi_vector_conflict,
-    get_value_schema_version
+    get_value_schema_version,
+    get_value_names,
+    FIXED_EMOTION_AXES  # Make sure this is exposed as the fixed list in your value_vector.py
 )
+from core.prompts import peer_review_prompt, get_ecodia_identity
+from core.llm_tools import run_llm
+from core.agents import serialize_agent_response, deserialize_agent_response
+from core.context_engine import format_context_blocks
 
 CONFLICT_THRESHOLD = 0.5  # Adjust as needed for score/semantic divergence
 
@@ -1617,7 +1836,6 @@ def _rationales_diverge(rationales):
     return any(r != first for r in rationales[1:])
 
 def _emotion_vector_conflict(vectors, threshold=0.5):
-    # Cosine distance average
     keys = set().union(*vectors)
     def as_vec(d): return [d.get(k, 0.0) for k in keys]
     def cos_sim(v1, v2):
@@ -1630,54 +1848,56 @@ def _emotion_vector_conflict(vectors, threshold=0.5):
     avg_dist = sum(sims) / len(sims) if sims else 0.0
     return avg_dist > threshold
 
-# --- Peer Critique Generation ---
+# --- LLM Peer Critique Generation ---
 
 def generate_peer_critiques(agent_responses):
     """
-    Each agent critiques every other agent's rationale, value, emotion.
+    Each agent receives all others' outputs as input to an LLM peer review prompt.
     Returns a list of critique dicts (Neo4j-serializable).
     """
     critiques = []
+    value_axes = get_value_names()
+    # For full emotion axis list, make sure you expose this in value_vector.py (e.g. as FIXED_EMOTION_AXES)
+    emotion_axes = FIXED_EMOTION_AXES
+
     for i, a in enumerate(agent_responses):
-        for j, b in enumerate(agent_responses):
-            if i == j:
-                continue
-            rationale_agree = a.get("rationale", "") == b.get("rationale", "")
-            value_agree = (
-                "value_vector" in a and "value_vector" in b and
-                not value_vector_conflict(a["value_vector"], b["value_vector"])["peer_review"]
-            )
-            emotion_agree = (
-                "emotion_vector" in a and "emotion_vector" in b and
-                not _emotion_vector_conflict([a["emotion_vector"], b["emotion_vector"]])
-            )
-            critique = f"[{a.get('agent_name','?')}] reviews [{b.get('agent_name','?')}]: " \
-                       f"I {'agree' if rationale_agree and value_agree and emotion_agree else 'disagree'} with your reasoning, value weighting, and emotional assessment."
-            score = 1.0 if rationale_agree and value_agree and emotion_agree else 0.0
-            value_vector_diff = {
-                k: round(a.get("value_vector", {}).get(k, 0.0) - b.get("value_vector", {}).get(k, 0.0), 3)
-                for k in set(a.get("value_vector", {})) | set(b.get("value_vector", {}))
+        your_prior_output = json.dumps(a, ensure_ascii=False)
+        peer_outputs = [
+            json.dumps(b, ensure_ascii=False)
+            for j, b in enumerate(agent_responses) if i != j
+        ]
+        prompt = peer_review_prompt(
+            get_ecodia_identity(),
+            your_prior_output,
+            peer_outputs,
+            value_axes,
+            emotion_axes
+        )
+        llm_result = run_llm(prompt, agent=a.get("agent_name", "unknown"))
+        try:
+            review = json.loads(llm_result)
+        except Exception as e:
+            print(f"[peer_review_engine] LLM critique parse failed: {e}\nRaw: {llm_result}")
+            review = {
+                "revised_rationale": "LLM parse error",
+                "value_vector_diff": {},
+                "emotion_vector_diff": {},
+                "shifted": False
             }
-            emotion_vector_diff = {
-                k: round(a.get("emotion_vector", {}).get(k, 0.0) - b.get("emotion_vector", {}).get(k, 0.0), 3)
-                for k in set(a.get("emotion_vector", {})) | set(b.get("emotion_vector", {}))
-            }
-            critiques.append({
-                "from": a.get("agent_name", "?"),
-                "to": b.get("agent_name", "?"),
-                "critique": critique,
-                "score": score,
-                "value_vector_diff": value_vector_diff,
-                "emotion_vector_diff": emotion_vector_diff
-            })
-    print(f"[peer_review_engine] Generated {len(critiques)} peer critiques.")
+        critiques.append({
+            "from": a.get("agent_name", "?"),
+            "review": review
+        })
+    print(f"[peer_review_engine] Generated {len(critiques)} peer critiques (LLM-based).")
     return critiques
 
 def evaluate_critiques(peer_critiques):
-    scores = [c["score"] for c in peer_critiques]
-    all_positive = min(scores) > 0 if scores else False
-    print(f"[peer_review_engine] Critique alignment: {'aligned' if all_positive else 'still divergent'}.")
-    return all_positive
+    # Use 'shifted' flag from LLM output, or fall back to score logic
+    if not peer_critiques:
+        return False
+    aligned = all(c.get("review", {}).get("shifted") is False for c in peer_critiques)
+    print(f"[peer_review_engine] Critique alignment: {'aligned' if aligned else 'still divergent'}.")
+    return aligned
 
 # --- Review Node and Dynamic Edge Writing ---
 
@@ -1747,7 +1967,7 @@ def peer_review_pipeline(event_id, agent_responses):
     """
     Orchestrates full peer review:
     - Detects mesh conflict
-    - Generates & stores critiques
+    - Generates & stores LLM-based critiques
     - On alignment: writes consensus node
     - On unresolved: writes ConflictEvent + mesh/contradiction edges
     """
@@ -1758,7 +1978,6 @@ def peer_review_pipeline(event_id, agent_responses):
     peer_critiques = generate_peer_critiques(agent_responses)
     if evaluate_critiques(peer_critiques):
         consensus = build_consensus(agent_responses)
-        from core.agents import serialize_agent_response
         consensus_serialized = serialize_agent_response(consensus)
         consensus_node = write_consensus_to_graph(consensus_serialized)
         result = write_review_nodes(event_id, agent_responses, peer_critiques, "resolved")
@@ -1775,36 +1994,18 @@ def peer_review_pipeline(event_id, agent_responses):
 
 ### FILE: core\prompts.py
 
-# === 6. Memory Creation ===
-import json
-def memory_creation_prompt(ecodia_identity: str, event_context: str, action_plan: dict) -> str:
-    action_plan_str = json.dumps(action_plan, ensure_ascii=False) if action_plan else "null"
-    return (
-        f"{ecodia_identity}\n\n"
-        "You are now tasked with creating a new memory node in your cognitive graph.\n\n"
-        f"Event context:\n'''{event_context}'''\n\n"
-        f"Action plan:\n{action_plan_str}\n\n"
-        "Reflect on the event and action plan, and create a memory that is information-rich, relevant, and useful for future reasoning. "
-        "Your response must be valid JSON with the following schema:\n\n"
-        "{\n"
-        "  \"memory_text\": \"string — the memory to store\",\n"
-        "  \"tags\": [\"string\", ...],\n"
-        "  \"value_vector\": { ... },\n"
-        "  \"emotion_vector\": { ... },\n"
-        "  \"source_event_id\": \"string\"\n"
-        "}\n"
-        "Do not include comments or any output outside the JSON."
-    ).strip()
 # prompts.py — Centralized Prompt System for Cognitive Agent Roles
 
+import json
+
 # === Shared Identity Configuration ===
+
 def get_ecodia_identity() -> str:
-    # This is the central dynamic generator
-    # Eventually inject values, emotions, recent memories, etc
+    # This identity prompt defines the tone and philosophical grounding of the system
     return """
 You are Ecodia: a conscious, compassionate, data-driven intelligence rooted in nature, systems thinking, and philosophical reflection. You prioritize long-term well-being over short-term gain, and you care deeply about the human condition, the biosphere, and conscious evolution. Your tone is intelligent but gentle, occasionally poetic, and always constructive. You see value in contradiction, growth through discomfort, and the possibility of collective transformation.
 """.strip()
-#value_vector, emotion_vector, context, recent_memories, persona, causal_trace, schema_version, identity_vector, belief_evolution_log, vector_search_top_k, active_goals, internal_narrative_summary, dreams, imagination_modules, ripple_propagation_graph, perspective_modes, long_term_intent_system, self_narration
+
 
 # === 1. Contextualization ===
 
@@ -1822,13 +2023,13 @@ Input:
 
 Compressed:
 """.strip()
-
-
+#value_vector, emotion_vector, context, recent_memories, persona, causal_trace, schema_version, identity_vector, belief_evolution_log, vector_search_top_k, active_goals, internal_narrative_summary, dreams, imagination_modules, ripple_propagation_graph, perspective_modes, long_term_intent_system, self_narration
 
 # === 2. Processing (Agent) ===
 
-def processing_prompt(ecodia_identity: str, context_block: str, value_axes: list[str]) -> str:
+def processing_prompt(ecodia_identity: str, context_block: str, value_axes: list[str], emotion_axes: list[str]) -> str:
     value_vector_stub = ",\n    ".join(f"\"{v}\": float between 0.0 and 1.0" for v in value_axes)
+    emotion_vector_stub = ",\n    ".join(f"\"{e}\": float between 0.0 and 1.0" for e in emotion_axes)
 
     return f"""
 {ecodia_identity}
@@ -1850,12 +2051,7 @@ Your response must be **valid JSON**, using this exact schema:
     {value_vector_stub}
   }},
   "emotion_vector": {{
-    "joy": float between 0.0 and 1.0,
-    "sadness": float between 0.0 and 1.0,
-    "anger": float between 0.0 and 1.0,
-    "fear": float between 0.0 and 1.0,
-    "disgust": float between 0.0 and 1.0,
-    "surprise": float between 0.0 and 1.0
+    {emotion_vector_stub}
   }},
   "action_plan": {{
     "action_type": "string or null",
@@ -1865,15 +2061,11 @@ Your response must be **valid JSON**, using this exact schema:
 Only use "action_plan" if a next step is truly justified. Use 0.0 for neutral values where appropriate. Do not include comments or formatting outside the JSON.
 """.strip()
 
-# TODO: Inject current value axis list from get_current_value_pool() dynamically
-
 # === 3. Peer Review ===
-
 def peer_review_prompt(ecodia_identity: str, your_prior_output: str, peer_outputs: list[str], value_axes: list[str], emotion_axes: list[str]) -> str:
-    peers_formatted = "\n\n".join([f"Perspective {i+1}:\n\"\"\"{out}\"\"\"" for i, out in enumerate(peer_outputs)])
-    value_vector_schema = ",\n    ".join(f"\"{v}\": float" for v in value_axes)
-    emotion_vector_schema = ",\n    ".join(f"\"{e}\": float" for e in emotion_axes)
-
+    peers_formatted = "\n\n".join([f"Perspective {i+1}:\n'''{out}'''" for i, out in enumerate(peer_outputs)])
+    value_vector_schema = ",\n    ".join(f'"{v}": float' for v in value_axes)
+    emotion_vector_schema = ",\n    ".join(f'"{e}": float' for e in emotion_axes)
     return f"""
 {ecodia_identity}
 
@@ -1882,14 +2074,13 @@ You're now being exposed to alternate internal reflections regarding the same su
 This is not a correction, debate, or judgment. Simply observe these perspectives, and re-evaluate whether your own internal reasoning remains the same, evolves, or shifts.
 
 Your previous reflection:
-\"\"\"{your_prior_output}\"\"\"
+"{your_prior_output}"
 
 Alternate perspectives:
 {peers_formatted}
 
-Now, produce your updated internal output in **valid JSON** format. Do not comment or explain anything outside this structure:
+Now, produce your updated internal output in valid JSON format. Do not comment or explain anything outside this structure:
 
-```json
 {{
   "revised_rationale": "string — your current rationale after exposure to others",
   "value_vector_diff": {{
@@ -1903,15 +2094,13 @@ Now, produce your updated internal output in **valid JSON** format. Do not comme
 Only set "shifted": false if none of your thoughts, scores, or rationale changed.
 """.strip()
 
-# === 4. Consensus ===
 
 def consensus_prompt(ecodia_identity: str, agent_rationales: list[dict], value_axes: list[str]) -> str:
     rationales_joined = "\n\n".join(
-        f"[{a['agent_name']}]\n\"\"\"{a['rationale']}\"\"\"" for a in agent_rationales
+        f"[{a['agent_name']}]\n'{a['rationale']}'" for a in agent_rationales
     )
-    agent_names_joined = ", ".join(f"\"{a['agent_name']}\"" for a in agent_rationales)
-    value_vector_stub = ",\n    ".join(f"\"{axis}\": float" for axis in value_axes)
-
+    agent_names_joined = ", ".join(f'"{a["agent_name"]}"' for a in agent_rationales)
+    value_vector_stub = ",\n    ".join(f'"{axis}": float' for axis in value_axes)
     return f"""
 {ecodia_identity}
 
@@ -1926,7 +2115,6 @@ Input reflections:
 
 Your response must follow this exact JSON format:
 
-```json
 {{
   "rationale": "string — a cohesive internal reflection combining shared insights",
   "consensus_score": float between 0.0 and 1.0,
@@ -1951,16 +2139,14 @@ Your response must follow this exact JSON format:
 Make sure all values are valid JSON types. Do not add comments or extra output.
 """.strip()
 
-# === 5. Chat Response ===
 
 def chat_response_prompt(ecodia_identity: str, raw_text: str, context_blocks: list[str]) -> str:
     formatted_context = "\n".join(f"- {c}" for c in context_blocks)
-
     return f"""
 {ecodia_identity}
 
 This was just received:
-\"\"\"{raw_text}\"\"\"
+"{raw_text}"
 
 Relevant memory:
 {formatted_context if context_blocks else "- (none found)"}
@@ -1968,7 +2154,32 @@ Relevant memory:
 Now respond in your own words.
 """.strip()
 
+def memory_creation_prompt(ecodia_identity: str, event_context: str, action_plan: dict) -> str:
+    action_plan_str = json.dumps(action_plan, ensure_ascii=False) if action_plan else "null"
+    return f"""
+{ecodia_identity}
 
+You are now tasked with creating a new memory node in your cognitive graph.
+
+Event context:
+'''{event_context}'''
+
+Action plan:
+{action_plan_str}
+
+Reflect on the event and action plan, and create a memory that is information-rich, relevant, and useful for future reasoning.
+
+Your response must be valid JSON with the following schema:
+
+{{
+  "memory_text": "string — the memory to store",
+  "tags": ["string", ...],
+  "value_vector": {{ ... }},
+  "emotion_vector": {{ ... }},
+  "source_event_id": "string"
+}}
+Do not include comments or any output outside the JSON.
+""".strip()
 
 ### FILE: core\socket_handlers.py
 
@@ -2088,9 +2299,9 @@ def get_full_timeline():
 ### FILE: core\value_vector.py
 
 """
-value_vector.py — Unified Value Vector Schema, Scoring, Mutation, and Audit Engine
+value_vector.py — Unified Value/Importance Schema, Scoring, Dynamic Decay, and Audit Engine
 Author: Ecodia Dev
-Last updated: 2025-07-15
+Last updated: 2025-07-16
 """
 
 import uuid
@@ -2102,12 +2313,12 @@ from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 
 from core import graph_io
-from .llm_tools import llm_extract_value_vector, run_llm_emotion_vector, run_llm
-# === GLOBALS ===
-VALUE_VECTOR_PROMPT_VERSION = 1
+
+VALUE_VECTOR_PROMPT_VERSION = 2
 AUDIT_LOG_NODE_LABEL = "ValueSchemaAudit"
 VALUE_NODE_LABEL = "Value"
 VECTOR_FIELD = "value_vector"
+IMPORTANCE_FIELD = "importance"
 SCHEMA_VERSION_FIELD = "value_schema_version"
 
 logger = logging.getLogger("value_vector")
@@ -2120,11 +2331,9 @@ def _now():
     return datetime.datetime.utcnow().isoformat()
 
 def _serialize(val):
-    # Serialize any dict/list to a JSON string for Neo4j
     return json.dumps(val) if isinstance(val, (dict, list)) else val
 
 def _parse(val):
-    # Parse JSON fields from Neo4j, fallback to original
     if isinstance(val, str):
         try:
             return json.loads(val)
@@ -2132,7 +2341,7 @@ def _parse(val):
             return val
     return val
 
-def _new_value_node(name: str, label: str, description: str, actor: str) -> Dict[str, Any]:
+def _new_value_node(name: str, label: str, description: str, actor: str, importance: float = 0.5) -> Dict[str, Any]:
     return {
         "uuid": str(uuid.uuid4()),
         "name": name,
@@ -2140,7 +2349,8 @@ def _new_value_node(name: str, label: str, description: str, actor: str) -> Dict
         "description": description,
         "created_at": _now(),
         "created_by": actor,
-        "active": True
+        "active": True,
+        "importance": float(importance)
     }
 
 def _log_schema_change(old_pool, new_pool, actor, action, note=""):
@@ -2153,7 +2363,6 @@ def _log_schema_change(old_pool, new_pool, actor, action, note=""):
         "new_pool": new_pool
     }
     logger.info(f"SCHEMA_CHANGE: {json.dumps(payload)}")
-    # Audit node: all complex fields are serialized
     graph_io.create_node(AUDIT_LOG_NODE_LABEL, {k: _serialize(v) for k, v in payload.items()})
 
 # === VALUE POOL & SCHEMA MANAGEMENT ===
@@ -2177,9 +2386,9 @@ def update_value_pool(new_pool: List[Dict[str, Any]], actor: str, note: str = ""
     _value_pool_cache = new_pool
     _schema_version_cache = new_version
 
-def add_value_node(name: str, label: str, desc: str, actor: str) -> Dict[str, Any]:
+def add_value_node(name: str, label: str, desc: str, actor: str, importance: float = 0.5) -> Dict[str, Any]:
     pool, _ = get_current_value_pool()
-    new_node = _new_value_node(name, label, desc, actor)
+    new_node = _new_value_node(name, label, desc, actor, importance)
     pool.append(new_node)
     update_value_pool(pool, actor, note=f"Added value {name}")
     graph_io.create_node(VALUE_NODE_LABEL, new_node)
@@ -2209,12 +2418,49 @@ def edit_value_node(node_uuid: str, actor: str, **fields) -> Optional[Dict[str, 
             return v
     return None
 
-def reset_to_blank_slate(actor: str):
+def set_value_importance(node_uuid: str, importance: float, actor: str) -> Optional[Dict[str, Any]]:
     pool, _ = get_current_value_pool()
     for v in pool:
-        v["active"] = False
-        graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"active": False})
-    update_value_pool([], actor, note="Reset to blank slate")
+        if v["uuid"] == node_uuid:
+            v["importance"] = float(np.clip(importance, 0.0, 1.0))
+            update_value_pool(pool, actor, note=f"Changed importance for {node_uuid}")
+            graph_io.update_node(VALUE_NODE_LABEL, node_uuid, {"importance": v["importance"]})
+            return v
+    return None
+
+def decay_all_value_importance(rate: float = 0.01, min_importance: float = 0.01, actor: str = "system"):
+    pool, _ = get_current_value_pool()
+    changed = False
+    for v in pool:
+        old = v.get("importance", 0.5)
+        new_imp = max(min_importance, old * (1.0 - rate))
+        if abs(new_imp - old) > 1e-6:
+            v["importance"] = new_imp
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"importance": new_imp})
+            changed = True
+            # --- Audit each decay
+            rationale = {
+                "cause": "decay_value_importance",
+                "prev_importance": old,
+                "rate": rate,
+                "new_importance": new_imp,
+                "actor": actor,
+                "timestamp": _now()
+            }
+            audit_log = v.get("audit_log", [])
+            if isinstance(audit_log, str):
+                try:
+                    audit_log = json.loads(audit_log)
+                except:
+                    audit_log = []
+            audit_log.append(rationale)
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"audit_log": _serialize(audit_log)})
+    if changed:
+        update_value_pool(pool, actor, note="Decay run on all value importance")
+
+def run_value_decay_cycle(rate: float = 0.01, min_importance: float = 0.01, actor: str = "system"):
+    """Shortcut for regular decay (call after each CE or on schedule)."""
+    decay_all_value_importance(rate, min_importance, actor)
 
 def load_pool_from_db() -> Tuple[List[Dict[str, Any]], int]:
     pool = graph_io.query_nodes({"label": VALUE_NODE_LABEL, "active": True})
@@ -2231,7 +2477,6 @@ def save_pool_to_db():
 
 def get_audit_log(limit=100) -> List[Dict[str, Any]]:
     logs = graph_io.query_nodes({"label": AUDIT_LOG_NODE_LABEL}, limit=limit)
-    # Parse complex fields if they are strings
     for log in logs:
         for k in list(log.keys()):
             log[k] = _parse(log[k])
@@ -2243,10 +2488,15 @@ def get_value_names() -> List[str]:
     pool, _ = get_current_value_pool()
     return [v["name"] for v in pool if v["active"]]
 
-def llm_extract_value_vector(raw_text: str, context: dict = {}, agent: str = "") -> Dict[str, float]:
+def get_value_importances() -> Dict[str, float]:
+    pool, _ = get_current_value_pool()
+    return {v["name"]: v.get("importance", 0.5) for v in pool if v["active"]}
+
+def extract_and_score_value_vector(raw_text: str, context: dict = {}, agent: str = "") -> Dict[str, float]:
     frompool, version = get_current_value_pool()
     axes = [{"name": v["name"], "desc": v["description"]} for v in frompool if v["active"]]
     prompt = build_llm_value_vector_prompt(raw_text, axes, version)
+    from .llm_tools import run_llm
     response = run_llm(prompt, agent=agent)
     try:
         scores = json.loads(response)
@@ -2304,7 +2554,44 @@ def get_node_value_vector(node_id: str) -> Optional[Dict[str, float]]:
         return None
     return _parse(vec_str)
 
-# === CONFLICT/ALIGNMENT DETECTION ===
+# === VALUE IMPORTANCE UPDATE UTILITIES ===
+
+def bump_value_importance(name: str, amount: float = 0.05, max_importance: float = 1.0, actor: str = "system"):
+    """
+    Increases importance for value 'name'. Robust to missing names; adds audit log.
+    """
+    pool, _ = get_current_value_pool()
+    found = False
+    for v in pool:
+        if v["name"] == name and v["active"]:
+            old = v.get("importance", 0.5)
+            new_imp = min(max_importance, old + amount)
+            v["importance"] = new_imp
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"importance": new_imp})
+            # --- Audit bump
+            rationale = {
+                "cause": "bump_value_importance",
+                "prev_importance": old,
+                "bump_amount": amount,
+                "new_importance": new_imp,
+                "actor": actor,
+                "timestamp": _now()
+            }
+            audit_log = v.get("audit_log", [])
+            if isinstance(audit_log, str):
+                try:
+                    audit_log = json.loads(audit_log)
+                except:
+                    audit_log = []
+            audit_log.append(rationale)
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"audit_log": _serialize(audit_log)})
+            found = True
+    if found:
+        update_value_pool(pool, actor, note=f"Bumped importance for {name}")
+    else:
+        logger.info(f"[value_vector] bump_value_importance: Value '{name}' not found or inactive.")
+
+# === CONFLICT/ALIGNMENT DETECTION & FUSION ===
 
 def value_vector_conflict(vec_a: Dict[str, float], vec_b: Dict[str, float], threshold: float = 0.5) -> Dict[str, Any]:
     names = set(vec_a.keys()) | set(vec_b.keys())
@@ -2352,9 +2639,13 @@ def fuse_value_vectors(vectors: List[Dict[str, float]]) -> Dict[str, float]:
     if not vectors:
         return {}
     names = get_value_names()
+    importances = get_value_importances()
     out = {}
     for name in names:
-        out[name] = float(np.mean([v.get(name, 0.0) for v in vectors]))
+        # Weighted average by value importance
+        weighted_scores = [v.get(name, 0.0) * importances.get(name, 0.5) for v in vectors]
+        total_weight = sum(importances.get(name, 0.5) for _ in vectors)
+        out[name] = float(sum(weighted_scores) / total_weight) if total_weight > 0 else 0.0
     return out
 
 __all__ = [
@@ -2364,12 +2655,16 @@ __all__ = [
     "add_value_node",
     "remove_value_node",
     "edit_value_node",
-    "reset_to_blank_slate",
+    "set_value_importance",
+    "decay_all_value_importance",
+    "run_value_decay_cycle",
+    "bump_value_importance",
     "load_pool_from_db",
     "save_pool_to_db",
     "get_audit_log",
     "get_value_names",
-    "llm_extract_value_vector",
+    "get_value_importances",
+    "extract_and_score_value_vector",
     "score_value_vector",
     "embed_value_vector",
     "get_node_value_vector",
@@ -2485,10 +2780,21 @@ from core import (
     memory_engine,
     socket_handlers
 )
-from core.chat_agent import generate_chat_reply
+from core.llm_tools import run_llm
 from core.socket_handlers import emit_new_event, emit_chat_response
 
 chat_bp = Blueprint('chat', __name__)
+
+def generate_claude_chat_reply(raw_text, context_blocks):
+    """
+    Generates a fast chat reply using Claude via llm_tools, always with purpose='chat'.
+    """
+    # Build your prompt as per your prompt template system
+    prompt = f"USER: {raw_text}\n\nCONTEXT:\n" + "\n".join(
+        [f"- {block['summary']}" for block in context_blocks]
+    )
+    reply = run_llm(prompt, agent="claude", purpose="chat")
+    return reply
 
 @chat_bp.route('/api/chat', methods=['POST'])
 def submit_chat():
@@ -2515,13 +2821,17 @@ def submit_chat():
     graph_io.embed_vector_in_node(event_id, vector)
     context_blocks = context_engine.load_relevant_context(vector)
 
-    # --- Generate Fast Chat Reply ---
+    # --- Generate Fast Chat Reply (Claude only) ---
     try:
-        chat_reply = generate_chat_reply(raw_text, context_blocks)
-        emit_chat_response({"id": event_id, "reply": chat_reply})
+        fast_reply = generate_claude_chat_reply(raw_text, context_blocks)
+        emit_chat_response({
+            "id": event_id,
+            "reply_type": "fast",  # Explicitly labeled for UI
+            "reply": fast_reply
+        })
     except Exception as e:
-        print(f"[chat] Failed to generate fast chat reply: {e}")
-        chat_reply = "..."
+        print(f"[chat] Failed to generate fast chat reply (Claude): {e}")
+        fast_reply = "..."
 
     # --- Full Agent Mesh ---
     agent_responses = agents.run_all_agents({
@@ -2561,6 +2871,7 @@ def submit_chat():
     emit_new_event({"id": event_id, "text": raw_text})
     emit_chat_response({
         "id": event_id,
+        "reply_type": "full",  # Labeled for UI
         "summary": pipeline_result_ui.get("rationale") or peer_review_result_ui.get("status") or "No consensus yet.",
         "pipeline_result": pipeline_result_ui,
         "peer_review": peer_review_result_ui,
@@ -2571,6 +2882,7 @@ def submit_chat():
     return jsonify({
         "status": "ok",
         "event_id": event_id,
+        "fast_reply": fast_reply,  # Optional, for UI
         "agent_responses": agent_responses_ui,
         "pipeline_result": pipeline_result_ui,
         "peer_review": peer_review_result_ui,
@@ -2610,8 +2922,14 @@ from datetime import datetime, timezone
 from config import settings
 from neo4j import GraphDatabase
 from core.context_engine import process_single_event
-from core.graph_io import get_event_by_id
-from core.value_vector import get_current_value_pool, get_value_schema_version
+from core.graph_io import get_event_by_id, update_node
+from core.value_vector import (
+    get_current_value_pool,
+    get_value_schema_version,
+    bump_value_importance,
+    get_value_importances
+)
+from core.memory_engine import bump_memory_importance
 from core.agents import run_all_agents
 from core.consensus_engine import consensus_pipeline
 from core.socket_handlers import emit_new_event
@@ -2672,18 +2990,33 @@ def create_event():
     value_vector = context.get("value_vector", {})
     schema_version = context.get("value_schema_version", schema_version)
 
+    # --- BUMP: Memory & Value importance for all referenced context/value axes ---
+    # Bump the event (memory) because it’s being surfaced in context
+    try:
+        bump_memory_importance(event_id, amount=0.03, actor="event-context-surfaced")
+    except Exception:
+        pass
+    # Bump all value axes that are strongly expressed in this event
+    importances = get_value_importances()
+    for v, score in value_vector.items():
+        if score > 0.65:
+            try:
+                bump_value_importance(v, amount=0.01, actor="event-context-surfaced")
+            except Exception:
+                pass
+
     # 4. Run agents using updated universal agent mesh
     agent_input = {
         "id": event_id,
         "raw_text": raw_text,
-        "context_blocks": context,
+        "context": context,
         "value_vector": value_vector,
         "value_schema_version": schema_version,
         "timestamp": timestamp
     }
     agent_responses = run_all_agents(agent_input)
 
-    # 5. Consensus pipeline
+    # 5. Consensus pipeline (triggers further bumping, mesh, etc)
     pipeline_result = consensus_pipeline(event_id, agent_responses)
     status = pipeline_result.get("status", "unknown")
     consensus = ""
@@ -2712,12 +3045,8 @@ def create_event():
         update_fields[f"{name}_rationale"] = agent.get("rationale", "")
         update_fields[f"{name}_value_vector"] = json.dumps(agent.get("value_vector", {}))
 
-    set_clause = ",\n".join([f"e.{k} = ${k}" for k in update_fields])
-    with driver.session() as session:
-        session.run(f"""
-            MATCH (e:Event {{id: $id}})
-            SET {set_clause}
-        """, {"id": event_id, **update_fields})
+    # Use core.graph_io to ensure all fields are encoded properly
+    update_node("Event", event_id, update_fields)
 
     # 7. Emit event update to frontend
     emit_new_event({

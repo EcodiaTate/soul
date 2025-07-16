@@ -112,6 +112,7 @@ def traverse_branch(node_id: str) -> List[str]:
 from core.context_engine import embed_text
 
 def search_nodes_by_text(phrase: str, field: str, top_k: int = 5, node_type: str = "Event") -> List[Dict[str, Any]]:
+    from core.context_engine import embed_text
     """
     Embed the phrase, then return top-k nodes where the cosine similarity
     of the node's embedding vector is highest. Only returns nodes with the requested field.

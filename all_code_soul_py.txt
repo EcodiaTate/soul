@@ -12,26 +12,29 @@ from dotenv import load_dotenv
 # Load .env config
 load_dotenv()
 
-SOCKETIO_ASYNC_MODE = os.environ.get("SOCKETIO_ASYNC_MODE", "threading")  # or "eventlet"
-
-# Create SocketIO singleton (NO app attached yet)
+SOCKETIO_ASYNC_MODE = os.getenv("SOCKETIO_ASYNC_MODE", "threading")
 socketio = SocketIO(cors_allowed_origins="*", async_mode=SOCKETIO_ASYNC_MODE)
 
 def create_app():
     app = Flask(__name__)
 
-    # CORS: Only allow your frontend in prod
+    # Load & validate secrets
+    FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
+    assert FLASK_SECRET_KEY, "FLASK_SECRET_KEY is required"
+    app.config['SECRET_KEY'] = FLASK_SECRET_KEY
+
+    JWT_SECRET = os.getenv("JWT_SECRET")
+    assert JWT_SECRET, "JWT_SECRET is required"
+    app.config['JWT_SECRET_KEY'] = JWT_SECRET
+
+    # CORS setup
     allowed_origins = [
-        os.environ.get("FRONTEND_URL", "http://localhost:5173"),
+        os.getenv("FRONTEND_URL", "http://localhost:5173"),
         "http://localhost:5173"
     ]
     CORS(app, supports_credentials=True, origins=allowed_origins)
 
-    # Security settings
-    app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY", "supersecret")
-    app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET", "jwtsecret")
-
-    # Register all blueprints
+    # Register blueprints
     from routes.events import events_bp
     from routes.chat import chat_bp
     from routes.timeline import timeline_bp
@@ -42,23 +45,33 @@ def create_app():
     app.register_blueprint(timeline_bp)
     app.register_blueprint(dreams_bp)
 
-    # JWT for admin routes
+    # JWT
     jwt = JWTManager(app)
 
-    # Health check endpoint
+    # Health check
     @app.route("/api/ping")
     def ping():
         return jsonify({"status": "ok"})
 
-    # Attach SocketIO to app
+    # Clean Neo4j connection
+    from core.graph_io import get_driver
+
+    @app.teardown_appcontext
+    def close_driver(exception=None):
+        driver = get_driver()
+        driver.close()
+        print("[app] Closed Neo4j driver connection.")
+
+    # Attach SocketIO
     socketio.init_app(app)
 
     return app
 
-# Run only for local/dev (not in Gunicorn/wsgi)
+# Local dev run (not used in Gunicorn)
 if __name__ == "__main__":
     app = create_app()
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.getenv("PORT", 5000))
+    print(f"[socketio] Using async mode: {socketio.async_mode}")
     socketio.run(app, host="0.0.0.0", port=port)
 
 
@@ -118,11 +131,20 @@ from neo4j import GraphDatabase
 from dotenv import load_dotenv
 load_dotenv()
 
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.environ.get("NEO4J_PASS", "password")
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASS", "password")
 
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+_driver = None
+
+def get_driver():
+    global _driver
+    if _driver is None:
+        _driver = GraphDatabase.driver(
+            os.getenv("NEO4J_URI"),
+            auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASS"))
+        )
+    return _driver
 
 # --- MAIN CONTEXT ENGINE HELPERS ---
 
@@ -548,84 +570,6 @@ def write_agent_log(agent_name, data):
 
 ### FILE: core\audit.py
 
-
-
-### FILE: core\chat_agent.py
-
-import json
-
-from core.prompts import (
-    chat_response_prompt,
-    claude_prethought_prompt,
-    get_ecodia_identity
-)
-from core.llm_tools import run_llm
-from core.vector_search import search_nodes_by_text
-
-
-def generate_chat_reply(raw_text: str, context_blocks: list[str] = None) -> str:
-    """
-    Generate a fast, high-quality conversational reply using Claude (purpose='chat').
-    Optionally includes relevant context blocks retrieved via vector search.
-    """
-    identity = get_ecodia_identity()
-    prompt = chat_response_prompt(identity, raw_text, context_blocks)
-    response = run_llm(prompt, agent="claude", purpose="chat")
-    return response.strip()
-
-
-def generate_prethought_queries(raw_text: str) -> list[dict]:
-    """
-    Ask Claude what it wants to retrieve to help it think.
-    Returns a list of { "phrase": ..., "field": ... } dicts.
-    """
-    identity = get_ecodia_identity()
-    prompt = claude_prethought_prompt(identity, raw_text)
-    output = run_llm(prompt, agent="claude", purpose="prethought")
-
-    try:
-        queries = json.loads(output)
-        if isinstance(queries, list):
-            return [
-                q for q in queries
-                if isinstance(q, dict) and "phrase" in q and "field" in q
-            ]
-        else:
-            print("[chat_agent] Prethought output not a list.")
-            return []
-    except Exception as e:
-        print(f"[chat_agent] Failed to parse prethought query list: {e}")
-        return []
-
-
-def retrieve_context_blocks(queries: list[dict], top_k: int = 2) -> list[str]:
-    """
-    Perform vector searches per Claude’s query list.
-    For each {phrase, field} pair, return relevant field content from top-k matching memory nodes.
-    """
-    results = []
-    for query in queries:
-        phrase = query["phrase"]
-        field = query["field"]
-        try:
-            matches = search_nodes_by_text(phrase, field=field, top_k=top_k)
-            blocks = [node.get(field, "").strip() for node in matches if node.get(field)]
-            results.extend(blocks)
-        except Exception as e:
-            print(f"[chat_agent] Vector search error for phrase '{phrase}' on field '{field}': {e}")
-    return results
-
-
-def generate_contextual_chat_reply(raw_text: str) -> str:
-    """
-    Full intelligent loop:
-    1. Claude outputs desired retrieval targets (phrases + fields)
-    2. We run vector search for each pair
-    3. Claude receives curated context snippets for reply
-    """
-    queries = generate_prethought_queries(raw_text)
-    context_blocks = retrieve_context_blocks(queries)
-    return generate_chat_reply(raw_text, context_blocks)
 
 
 ### FILE: core\consciousness_engine.py
@@ -1094,11 +1038,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.environ.get("NEO4J_PASS", "password")
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
+NEO4J_PASS = os.getenv("NEO4J_PASS")
 
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+_driver = None
+
+def get_driver():
+    global _driver
+    if _driver is None:
+        _driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+    return _driver
 
 # --- Fields that should always be JSON-encoded if non-primitive ---
 COMPLEX_FIELDS = {
@@ -1357,13 +1307,13 @@ from core.value_vector import (
 )
 
 # ---- Config
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-OPENAI_EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
-OPENAI_LLM_MODEL = os.environ.get("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-pro")
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-opus-20240229")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OPENAI_EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
+OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-opus-20240229")
 
 # --- Helper for LLM dispatch ---
 def run_llm(prompt, agent=None, purpose=None, model=None):
@@ -2803,6 +2753,98 @@ __all__ = [
 ]
 
 
+### FILE: core\voice_engine.py
+
+import json
+
+from core.prompts import (
+    chat_response_prompt,
+    claude_prethought_prompt,
+    get_ecodia_identity
+)
+from core.llm_tools import run_llm
+from core.vector_search import search_nodes_by_text
+
+
+def generate_chat_reply(raw_text: str, context_blocks: list[str] = None) -> str:
+    """
+    Generate a fast, high-quality conversational reply using Claude (purpose='chat').
+    Optionally includes context blocks. Handles None or empty safely.
+    """
+    identity = get_ecodia_identity()
+    context_blocks = context_blocks or []  # fallback to empty list if None
+    prompt = chat_response_prompt(identity, raw_text, context_blocks)
+    response = run_llm(prompt, agent="claude", purpose="chat")
+    return response.strip()
+
+
+def generate_prethought_queries(raw_text: str) -> list[dict]:
+    """
+    Ask Claude what it wants to retrieve to help it think.
+    Returns a list of { "phrase": ..., "field": ... } dicts.
+    """
+    identity = get_ecodia_identity()
+    prompt = claude_prethought_prompt(identity, raw_text)
+    output = run_llm(prompt, agent="claude", purpose="prethought")
+
+    try:
+        queries = json.loads(output)
+        if isinstance(queries, list):
+            return [
+                q for q in queries
+                if isinstance(q, dict) and "phrase" in q and "field" in q
+            ]
+        else:
+            print("[voice_engine] Prethought output not a list.")
+            return []
+    except Exception as e:
+        print(f"[voice_engine] Failed to parse prethought query list: {e}")
+        return []
+
+
+def retrieve_context_blocks(queries: list[dict], top_k: int = 2) -> list[str]:
+    """
+    Perform vector searches per Claude’s query list.
+    Returns top-k field results per query. Handles failures silently.
+    """
+    results = []
+    for query in queries:
+        phrase = query.get("phrase")
+        field = query.get("field")
+        try:
+            matches = search_nodes_by_text(phrase, field=field, top_k=top_k)
+            blocks = [node.get(field, "").strip() for node in matches if node.get(field)]
+            results.extend(blocks)
+        except Exception as e:
+            print(f"[voice_engine] Vector search error for phrase '{phrase}' on field '{field}': {e}")
+    return results
+
+
+def generate_contextual_chat_reply(raw_text: str) -> str:
+    """
+    Full intelligent loop:
+    1. Claude outputs what it wants to know (prethought)
+    2. We try to retrieve matching memory via vector search
+    3. If we find results, send them back with raw_text
+    4. If nothing, fallback to raw_text-only chat
+    """
+    try:
+        queries = generate_prethought_queries(raw_text)
+        if not queries:
+            print("[voice_engine] No prethought queries returned, falling back to no-context mode.")
+            return generate_chat_reply(raw_text)
+
+        context_blocks = retrieve_context_blocks(queries)
+        if not context_blocks:
+            print("[voice_engine] No context blocks found, falling back to no-context mode.")
+            return generate_chat_reply(raw_text)
+
+        return generate_chat_reply(raw_text, context_blocks)
+    except Exception as e:
+        print(f"[voice_engine] Full contextual reply failed: {e}. Falling back.")
+        return generate_chat_reply(raw_text)
+
+
 ### FILE: core\__init__.py
 
 
@@ -2991,7 +3033,7 @@ def submit_chat():
 
     # --- Memory Evaluation ---
     try:
-        memory_engine.evaluate_event(event_id)
+        memory_engine.voice_engine(event_id)
     except Exception as e:
         print(f"[chat] Memory evaluation failed: {e}")
 
@@ -3069,8 +3111,10 @@ import json
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
+from core.graph_io import get_driver
+driver = get_driver()
+
 events_bp = Blueprint('events', __name__)
-driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASS))
 
 @events_bp.route('/api/event', methods=['POST'])
 def create_event():

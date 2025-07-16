@@ -22,8 +22,10 @@ import json
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
+from core.graph_io import get_driver
+driver = get_driver()
+
 events_bp = Blueprint('events', __name__)
-driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASS))
 
 @events_bp.route('/api/event', methods=['POST'])
 def create_event():

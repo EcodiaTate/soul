@@ -8,26 +8,31 @@ from dotenv import load_dotenv
 # Load .env config
 load_dotenv()
 
-SOCKETIO_ASYNC_MODE = os.environ.get("SOCKETIO_ASYNC_MODE", "threading")  # or "eventlet"
+# Pre-validate critical secrets (fail fast if missing)
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
+assert FLASK_SECRET_KEY, "FLASK_SECRET_KEY is required"
 
-# Create SocketIO singleton (NO app attached yet)
+JWT_SECRET = os.getenv("JWT_SECRET")
+assert JWT_SECRET, "JWT_SECRET is required"
+
+SOCKETIO_ASYNC_MODE = os.getenv("SOCKETIO_ASYNC_MODE", "eventlet")  # Default to eventlet
 socketio = SocketIO(cors_allowed_origins="*", async_mode=SOCKETIO_ASYNC_MODE)
 
 def create_app():
     app = Flask(__name__)
 
+    # Load config
+    app.config['SECRET_KEY'] = FLASK_SECRET_KEY
+    app.config['JWT_SECRET_KEY'] = JWT_SECRET
+
     # CORS: Only allow your frontend in prod
     allowed_origins = [
-        os.environ.get("FRONTEND_URL", "http://localhost:5173"),
+        os.getenv("FRONTEND_URL", "http://localhost:5173"),
         "http://localhost:5173"
     ]
     CORS(app, supports_credentials=True, origins=allowed_origins)
 
-    # Security settings
-    app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY", "supersecret")
-    app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET", "jwtsecret")
-
-    # Register all blueprints
+    # Register blueprints
     from routes.events import events_bp
     from routes.chat import chat_bp
     from routes.timeline import timeline_bp
@@ -38,7 +43,7 @@ def create_app():
     app.register_blueprint(timeline_bp)
     app.register_blueprint(dreams_bp)
 
-    # JWT for admin routes
+    # JWT setup
     jwt = JWTManager(app)
 
     # Health check endpoint
@@ -46,13 +51,23 @@ def create_app():
     def ping():
         return jsonify({"status": "ok"})
 
-    # Attach SocketIO to app
+    # Clean Neo4j connection
+    from core.graph_io import get_driver
+
+    @app.teardown_appcontext
+    def close_driver(exception=None):
+        driver = get_driver()
+        driver.close()
+        print("[app] Closed Neo4j driver connection.")
+
+    # Attach SocketIO
     socketio.init_app(app)
 
     return app
 
-# Run only for local/dev (not in Gunicorn/wsgi)
+# Local development server (Flask + SocketIO)
 if __name__ == "__main__":
     app = create_app()
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.getenv("PORT", 5000))
+    print(f"[socketio] Using async mode: {socketio.async_mode}")
     socketio.run(app, host="0.0.0.0", port=port)

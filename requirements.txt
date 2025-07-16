@@ -3,6 +3,7 @@ neo4j
 Flask
 gunicorn
 gevent
+anthropic
 gevent-websocket
 Flask-SocketIO
 python-dotenv

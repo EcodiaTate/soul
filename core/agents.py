@@ -9,10 +9,11 @@ Each agent can have its own persona, logic, logging, lineage, and custom metadat
 import uuid
 import json
 from datetime import datetime, timezone
-from core.llm_tools import run_llm_emotion_vector
+
+from core.llm_tools import run_llm, run_llm_emotion_vector
 from core.value_vector import (
-    extract_and_score_value_vector,  
-    get_value_schema_version
+    extract_and_score_value_vector,
+    get_value_schema_version,
 )
 
 AGENT_REGISTRY = {}
@@ -64,10 +65,6 @@ def deserialize_agent_response(resp: dict) -> dict:
     return d
 
 def agent_reason(event, agent_name, context=None, log=True):
-    """
-    The dynamic agent cognition routine.
-    Handles agent selection, extraction/serialization, audit logging, meta-data, and schema evolution.
-    """
     agent = AGENT_REGISTRY.get(agent_name)
     if not agent:
         raise ValueError(f"Agent '{agent_name}' not registered!")
@@ -80,7 +77,6 @@ def agent_reason(event, agent_name, context=None, log=True):
     if not isinstance(result, dict):
         raise ValueError("Agent must return dict with at least 'rationale' and 'score'.")
 
-    # Dynamically inject value vector (unless agent provides custom)
     value_vec = result.get("value_vector")
     if not value_vec:
         try:
@@ -89,7 +85,6 @@ def agent_reason(event, agent_name, context=None, log=True):
             print(f"[agents] Value vector extraction failed for agent '{agent_name}': {e}")
             value_vec = {}
 
-    # Dynamically inject emotion vector (unless agent provides custom)
     emotion_vec = result.get("emotion_vector")
     if not emotion_vec:
         try:
@@ -116,7 +111,6 @@ def agent_reason(event, agent_name, context=None, log=True):
     }
     audit_log = result.get("audit_log", []) + [audit_entry]
 
-    # Support for arbitrary extra fields in responses
     agent_response = {
         "id": str(uuid.uuid4()),
         "agent_name": agent_name,
@@ -133,7 +127,6 @@ def agent_reason(event, agent_name, context=None, log=True):
         "user_pinned": user_pinned,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "audit_log": audit_log,
-        # Pass through any agent-level extras, in case your agent returns more fields
         **{k: v for k, v in result.items() if k not in {
             "rationale", "score", "action_plan", "value_vector", "emotion_vector",
             "causal_trace", "agent_priority", "user_pinned", "audit_log"
@@ -145,32 +138,47 @@ def agent_reason(event, agent_name, context=None, log=True):
 
     return agent_response
 
-# --- Agent Definition: Dynamic Example Stub ---
+# --- Production Agent Definition ---
 
-def llm_agent(event, context=None):
+def claude_reasoning_agent(event, context=None):
     """
-    Generic agent stub for live demo/testing.
-    Replace this with any persona, reflection, or reasoning logic.
+    Core LLM reasoning agent using Claude for reflective, analytical processing.
     """
-    import random
-    rationale = "Stub LLM agent: replace me with a true reflection prompt/LLM call."
-    # Return empty vectors for dynamic injection, but allow extra fields if desired
-    return {
-        "rationale": rationale,
-        "score": round(random.uniform(0.2, 0.9), 3),
-        "action_plan": None,
-    }
+    prompt = f"""You are an intelligent agent in the Soul-OS cognitive mesh. Analyze the following user input and produce your rationale.
 
-# Example dynamic agent registration:
+INPUT:
+\"\"\"
+{context}
+\"\"\"
+
+Please return your analysis in the following JSON format:
+{{
+  "rationale": "... your explanation ...",
+  "score": float (0.0–1.0),
+  "action_plan": optional string or null
+}}
+"""
+    output = run_llm(prompt, agent="claude", purpose="agent")
+    try:
+        result = json.loads(output)
+        return result
+    except Exception as e:
+        print(f"[claude_reasoning_agent] JSON parsing failed: {e}")
+        return {
+            "rationale": f"Failed to parse output: {output}",
+            "score": 0.5,
+            "action_plan": None
+        }
+
 register_agent(
-    "LLM-Stub",
-    llm_agent,
-    description="Stub agent for demo/testing.",
-    persona="Objective test agent",
-    model_type="Stub"
+    "Claude-Analyst",
+    claude_reasoning_agent,
+    description="Main cognitive mesh agent using Claude for system reasoning.",
+    persona="Reflective analyst",
+    model_type="claude"
 )
 
-# --- Mesh Execution: Run All Agents ---
+# --- Mesh Execution ---
 
 def run_all_agents(event, context=None):
     responses = []
@@ -208,8 +216,6 @@ def list_agents():
         }
         for name, agent in AGENT_REGISTRY.items()
     ]
-
-# --- Optional: Dynamic Agent Log File Integration ---
 
 def write_agent_log(agent_name, data):
     agent = AGENT_REGISTRY.get(agent_name)

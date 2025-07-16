@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 
 from core.value_vector import (
-    generate_value_vector,  # Should alias to llm_extract_value_vector or your engine
+    llm_extract_value_vector,  # Should alias to llm_extract_value_vector or your engine
     generate_emotion_vector,
     get_value_schema_version
 )
@@ -85,7 +85,7 @@ def agent_reason(event, agent_name, context=None, log=True):
     value_vec = result.get("value_vector")
     if not value_vec:
         try:
-            value_vec = generate_value_vector(context_block, agent=agent_name)
+            value_vec = llm_extract_value_vector(context_block, agent=agent_name)
         except Exception as e:
             print(f"[agents] Value vector extraction failed for agent '{agent_name}': {e}")
             value_vec = {}

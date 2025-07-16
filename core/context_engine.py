@@ -9,11 +9,14 @@ import json
 import logging
 from dotenv import load_dotenv
 import openai
+import numpy as np
 
 from core.graph_io import (
     get_unprocessed_event_nodes,
     mark_event_processed,
+    query_nodes,
 )
+
 from core.prompts import contextualization_prompt
 
 load_dotenv()
@@ -99,3 +102,32 @@ def format_context_blocks(blocks):
                     formatted.append(b[key])
                     break
     return formatted
+
+# === CONTEXT RETRIEVAL ===
+
+def cosine_similarity(vec1, vec2):
+    if not vec1 or not vec2:
+        return 0.0
+    a = np.array(vec1)
+    b = np.array(vec2)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+
+def retrieve_similar_context(vector, top_k=5, node_type="Event"):
+    """
+    Finds top_k similar nodes of type `node_type` based on vector similarity.
+    """
+    all_nodes = query_nodes(node_type, limit=100)
+    scored = []
+    for node in all_nodes:
+        emb = node.get("embedding")
+        if emb:
+            score = cosine_similarity(vector, emb)
+            scored.append((score, node))
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return [node for _, node in scored[:top_k]]
+
+def load_relevant_context(vector, top_k=5):
+    """
+    Alias for retrieve_similar_context — used by chat.py and agent mesh.
+    """
+    return retrieve_similar_context(vector, top_k=top_k, node_type="Event")

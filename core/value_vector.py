@@ -27,6 +27,21 @@ logger.setLevel(logging.INFO)
 _value_pool_cache = None
 _schema_version_cache = None
 
+# core/value_vector.py
+
+FIXED_EMOTION_AXES = [
+    "joy",
+    "sadness",
+    "anger",
+    "fear",
+    "disgust",
+    "surprise",
+    "curiosity",
+    "trust",
+    "shame",
+    "love"
+]
+
 def _now():
     return datetime.datetime.utcnow().isoformat()
 

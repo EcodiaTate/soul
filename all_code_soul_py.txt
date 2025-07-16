@@ -327,10 +327,9 @@ Each agent can have its own persona, logic, logging, lineage, and custom metadat
 import uuid
 import json
 from datetime import datetime, timezone
-
+from core.llm_tools import run_llm_emotion_vector
 from core.value_vector import (
     extract_and_score_value_vector,  
-    run_llm_emotion_vector,
     get_value_schema_version
 )
 

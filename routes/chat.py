@@ -1,120 +1,71 @@
+# routes/chat.py — Real-time Chat API (Event Normalization, No SocketIO Emit in REST)
 from flask import Blueprint, request, jsonify
-from uuid import uuid4
-from datetime import datetime, timezone
-
-from core import (
-    graph_io,
-    context_engine,
-    agents,
-    consensus_engine,
-    memory_engine,
-    socket_handlers
-)
-from core.llm_tools import run_llm
-from core.socket_handlers import emit_new_event, emit_chat_response
+from core.memory_engine import store_event
+from core.agent_manager import assign_task
+from core.logging_engine import log_action
+from core.auth import verify_token
+# Do NOT import flask_socketio.emit in this REST route file
 
 chat_bp = Blueprint('chat', __name__)
 
-def generate_claude_chat_reply(raw_text, context_blocks):
+@chat_bp.route('/chat', methods=['POST'])
+def chat_with_soul():
     """
-    Generates a fast chat reply using Claude via llm_tools, always with purpose='chat'.
+    Accept a user message, create event, route to LLM, return response.
+    For REST: do NOT emit via socket here! Just return JSON.
     """
-    # Build your prompt as per your prompt template system
-    prompt = f"USER: {raw_text}\n\nCONTEXT:\n" + "\n".join(
-        [f"- {block['summary']}" for block in context_blocks]
-    )
-    reply = run_llm(prompt, agent="claude", purpose="chat")
-    return reply
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    user = verify_token(token)
+    if 'error' in user:
+        return jsonify({"error": "Unauthorized"}), 401
 
-@chat_bp.route('/api/chat', methods=['POST'])
-def submit_chat():
     data = request.get_json()
-    raw_text = data.get("raw_text")
-    user_origin = data.get("user_origin", "anonymous")
+    user_message = data.get("message")
+    if not user_message:
+        return jsonify({"error": "No message provided"}), 400
 
-    if not raw_text or not raw_text.strip():
-        return jsonify({"status": "error", "message": "Missing raw_text"}), 400
+    # Store user message as event (returns normalized dict)
+    event = store_event(user_message, agent_origin=user.get("username"))
+    if not event or not event.get("id"):
+        return jsonify({"error": "Failed to store event"}), 500
 
-    event_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).isoformat()
-    event_node = graph_io.create_node("Event", {
-        "id": event_id,
-        "raw_text": raw_text,
-        "timestamp": timestamp,
-        "agent_origin": user_origin,
-        "type": "chat",
-        "status": "unprocessed"
-    })
+    # Assign task to an agent (e.g., gpt_writer)
+    response = assign_task("gpt_writer", user_message, context={})
+    log_action("routes/chat", "message", f"User {user.get('username')} sent message")
 
-    # --- Embed + Retrieve Context ---
-    vector = context_engine.embed_text(raw_text)
-    graph_io.embed_vector_in_node(event_id, vector)
-    context_blocks = context_engine.load_relevant_context(vector)
-
-    # --- Generate Fast Chat Reply (Claude only) ---
-    try:
-        fast_reply = generate_claude_chat_reply(raw_text, context_blocks)
-        emit_chat_response({
-            "id": event_id,
-            "reply_type": "fast",  # Explicitly labeled for UI
-            "reply": fast_reply
-        })
-    except Exception as e:
-        print(f"[chat] Failed to generate fast chat reply (Claude): {e}")
-        fast_reply = "..."
-
-    # --- Full Agent Mesh ---
-    agent_responses = agents.run_all_agents({
-        "id": event_id,
-        "raw_text": raw_text,
-        "timestamp": timestamp,
-        "context_blocks": context_blocks,
-        "event_node": event_node
-    })
-
-    # --- Consensus / Peer Review ---
-    pipeline_result = consensus_engine.consensus_pipeline(event_id, agent_responses)
-
-    # --- Safe Field Parsing ---
-    def parse_fields(obj):
-        import json
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if isinstance(v, str):
-                    try:
-                        obj[k] = json.loads(v)
-                    except:
-                        pass
-        return obj
-
-    agent_responses_ui = [parse_fields(dict(r)) for r in agent_responses]
-    pipeline_result_ui = parse_fields(dict(pipeline_result.get("node", {}) if pipeline_result.get("node") else {}))
-    peer_review_result_ui = parse_fields(dict(pipeline_result.get("review_result", {}) if pipeline_result.get("review_result") else {}))
-
-    # --- Memory Evaluation ---
-    try:
-        memory_engine.voice_engine(event_id)
-    except Exception as e:
-        print(f"[chat] Memory evaluation failed: {e}")
-
-    # --- WebSocket Emits ---
-    emit_new_event({"id": event_id, "text": raw_text})
-    emit_chat_response({
-        "id": event_id,
-        "reply_type": "full",  # Labeled for UI
-        "summary": pipeline_result_ui.get("rationale") or peer_review_result_ui.get("status") or "No consensus yet.",
-        "pipeline_result": pipeline_result_ui,
-        "peer_review": peer_review_result_ui,
-        "agent_responses": agent_responses_ui
-    })
-
-    # --- Return to Frontend ---
+    # DO NOT emit SocketIO here. REST returns only.
     return jsonify({
-        "status": "ok",
-        "event_id": event_id,
-        "fast_reply": fast_reply,  # Optional, for UI
-        "agent_responses": agent_responses_ui,
-        "pipeline_result": pipeline_result_ui,
-        "peer_review": peer_review_result_ui,
-        "summary": pipeline_result_ui.get("rationale") or peer_review_result_ui.get("status") or "No consensus reached."
+        "event": event,
+        "response": response.get("response", "")
     })
+
+@chat_bp.route('/chat/history', methods=['GET'])
+def get_chat_history():
+    """
+    Return chronological list of recent chat messages/events, normalized.
+    """
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    user = verify_token(token)
+    if 'error' in user:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    from core.graph_io import run_read_query
+    results = run_read_query("MATCH (e:Event) RETURN e ORDER BY e.timestamp DESC LIMIT 50")
+    # Normalize event dict output
+    messages = [
+        {
+            "text": r["e"].get("raw_text", ""),
+            "timestamp": r["e"].get("timestamp", ""),
+            "agent_origin": r["e"].get("agent_origin", None),
+            "event_id": r["e"].get("id", None),
+            "status": r["e"].get("status", None)
+        }
+        for r in results if "e" in r
+    ]
+    log_action("routes/chat", "history", f"Returned chat history to {user.get('username')}")
+
+    return jsonify({"history": messages})
+
+# Note:
+# - If you want live chat feedback, add SocketIO event handlers in a *socket_handlers.py* module,
+#   import/attach them to your app in app.py. This REST route should not emit.

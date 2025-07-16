@@ -1,191 +1,130 @@
-import json
+# core/llm_tools.py — Multi-LLM Prompt Orchestrator (Lazy Client Init)
 import os
-import random
+from core.logging_engine import log_action
+from random import choice
+from time import sleep
 
-# --- Import OpenAI, Gemini, and Anthropic SDKs or use HTTP requests
-import openai
-import anthropic
-from google.generativeai import GenerativeModel  # Example, update as needed
+# --- Model Configs ---
+MODEL_SETTINGS = {
+    "gpt": {
+        "model": "gpt-4",
+        "max_tokens": 1024,
+        "temperature": 0.7
+    },
+    "claude": {
+        "model": "claude-3-opus-20240229",
+        "temperature": 0.7
+    },
+    "gemini": {
+        "model": "models/gemini-pro",
+        "temperature": 0.7
+    }
+}
 
-from core.prompts import (
-    processing_prompt,
-    peer_review_prompt,
-    contextualization_prompt,
-    consensus_prompt,
-)
-from core.value_vector import (
-    get_value_names,
-    get_value_schema_version,
-    get_value_importances,
-    FIXED_EMOTION_AXES,
-)
+def _get_openai():
+    import openai
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+    openai.api_key = key
+    return openai
 
-# ---- Config
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-OPENAI_EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
-OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-opus-20240229")
+def _get_anthropic():
+    import anthropic
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set")
+    return anthropic.Anthropic(api_key=key)
 
-# --- Helper for LLM dispatch ---
-def run_llm(prompt, agent=None, purpose=None, model=None):
-    """
-    Multi-backend LLM runner.
-    - Embedding/context: GPT
-    - Chat/agent/peer/prethought: Claude
-    - Consensus/CE: Gemini
-    """
-    backend = (purpose or "").lower()
-    response = None
+def _get_gemini_model():
+    import google.generativeai as genai
+    key = os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise RuntimeError("GOOGLE_API_KEY not set")
+    genai.configure(api_key=key)
+    return genai.GenerativeModel(MODEL_SETTINGS["gemini"]["model"])
 
-    # Embedding/context compression: GPT
-    if backend in ["embedding", "context", "compress"]:
-        print(f"[llm_tools] OpenAI GPT ({OPENAI_EMBED_MODEL}) for context/embedding.")
-        openai.api_key = OPENAI_API_KEY
-        return [random.uniform(-1, 1) for _ in range(1536)]
+# --- Base Prompt Utility ---
+def _safe_prompt(model_id: str, prompt: str, system_prompt: str = None, temperature: float = 0.7) -> str:
+    """Unified handler for all model prompts with fallback logging."""
+    try:
+        if model_id == "gpt":
+            return _prompt_openai(prompt, system_prompt, temperature)
+        elif model_id == "claude":
+            return _prompt_claude(prompt, system_prompt, temperature)
+        elif model_id == "gemini":
+            return _prompt_gemini(prompt, system_prompt)
+    except Exception as e:
+        log_action("llm_tools", "prompt_error", f"{model_id} failed: {e}")
+        return f"[{model_id} ERROR]"
 
-    # Claude for agent/mesh/chat/prethought
-    elif backend in ["agent", "chat", "peer_review", "mesh", "prethought"]:
-        print(f"[llm_tools] Claude ({ANTHROPIC_MODEL}) for {backend}.")
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        try:
-            msg = client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=512,
-                temperature=0.0,
-                system=prompt,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            text = msg.content[0].text if msg.content and msg.content[0].text else ""
-            try:
-                response = json.loads(text)
-            except Exception:
-                response = _dev_parse_json_from_anything(text)
-            return response
-        except Exception as e:
-            print(f"[llm_tools] Claude error on {backend}: {e}")
-            return {}
-
-    # Gemini for synthesis, consensus, consciousness
-    elif backend in ["consensus", "ce", "consciousness", "rational_synthesis"]:
-        print(f"[llm_tools] Gemini ({GEMINI_MODEL}) for consensus/CE.")
-        model = GenerativeModel(GEMINI_MODEL)
-        try:
-            out = model.generate_content(prompt)
-            text = out.text if hasattr(out, "text") else str(out)
-            try:
-                response = json.loads(text)
-            except Exception:
-                response = _dev_parse_json_from_anything(text)
-            return response
-        except Exception as e:
-            print(f"[llm_tools] Gemini error: {e}")
-            return {}
-
-    # OpenAI fallback/default
-    else:
-        print(f"[llm_tools] OpenAI GPT ({OPENAI_LLM_MODEL}) for fallback/default.")
-        openai.api_key = OPENAI_API_KEY
-        try:
-            completion = openai.ChatCompletion.create(
-                model=OPENAI_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=512,
-            )
-            text = completion.choices[0].message.content
-            try:
-                response = json.loads(text)
-            except Exception:
-                response = _dev_parse_json_from_anything(text)
-            return response
-        except Exception as e:
-            print(f"[llm_tools] OpenAI error: {e}")
-            return {}
-
-
-def _dev_parse_json_from_anything(text):
-    """
-    Dev fallback: try to find JSON in raw string.
-    """
-    import re
-    match = re.search(r'(\{[\s\S]*\})', text)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except Exception:
-            pass
-    return {}
-
-# --- Contextual compression (uses GPT) ---
-def compress_text(raw_text):
-    prompt = contextualization_prompt(raw_text)
-    result = run_llm(prompt, purpose="context")
-    return result
-
-# --- Value vector extraction (Agent mesh: Claude) ---
-def llm_extract_value_vector(text, agent="unknown"):
-    value_axes = get_value_names()
-    schema_version = get_value_schema_version()
-    prompt = processing_prompt("", text, value_axes)
-    out = run_llm(prompt, agent=agent, purpose="agent")
-    if isinstance(out, dict):
-        if "value_vector" in out:
-            return {k: float(max(0.0, min(1.0, out["value_vector"].get(k, 0.0))) ) for k in value_axes}
-        return {k: float(max(0.0, min(1.0, out.get(k, 0.0))) ) for k in value_axes}
-    return {k: 0.5 for k in value_axes}
-
-# --- Emotion vector extraction (Claude) ---
-def run_llm_emotion_vector(event, agent="unknown"):
-    axes = list(FIXED_EMOTION_AXES)
-    prompt = f"Extract emotion vector for: {event.get('raw_text','')}"
-    out = run_llm(prompt, agent=agent, purpose="agent")
-    if isinstance(out, dict):
-        return {k: float(max(0.0, min(1.0, out.get(k, 0.0))) ) for k in axes}
-    return {k: 0.5 for k in axes}
-
-# --- Peer review (Claude) ---
-def llm_peer_review(agent_prior, peer_outputs, value_axes, emotion_axes, agent="unknown"):
-    prompt = peer_review_prompt(
-        #get_ecodia_identity(),
-        agent_prior,
-        peer_outputs,
-        value_axes,
-        emotion_axes
+# --- Model-Specific Wrappers ---
+def _prompt_openai(prompt, system_prompt=None, temperature=0.7):
+    openai = _get_openai()
+    messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+    messages.append({"role": "user", "content": prompt})
+    response = openai.ChatCompletion.create(
+        model=MODEL_SETTINGS["gpt"]["model"],
+        messages=messages,
+        max_tokens=MODEL_SETTINGS["gpt"]["max_tokens"],
+        temperature=temperature
     )
-    return run_llm(prompt, agent=agent, purpose="peer_review")
+    return response["choices"][0]["message"]["content"].strip()
 
-# --- Consensus/CE synthesis (Gemini) ---
-def llm_consensus(agent_rationales, value_axes):
-    prompt = consensus_prompt(
-        #get_ecodia_identity(),
-        agent_rationales,
-        value_axes
+def _prompt_claude(prompt, system_prompt=None, temperature=0.7):
+    client = _get_anthropic()
+    msg = client.messages.create(
+        model=MODEL_SETTINGS["claude"]["model"],
+        max_tokens=1024,
+        temperature=temperature,
+        system=system_prompt or "",
+        messages=[{"role": "user", "content": prompt}]
     )
-    return run_llm(prompt, purpose="consensus")
+    # NOTE: structure may differ by Anthropic version, adapt if needed
+    return msg.content[0].text.strip()
 
-# --- Build value vector prompt (for LLM) ---
-def build_llm_value_vector_prompt(text, axes=None, version=None):
-    axes = axes or get_value_names()
-    desc = "\n".join([f"- {ax}" for ax in axes])
-    prompt = f"""Analyze the following statement for value expression. For each value, score from 0 (not present) to 1 (maximal). Output JSON:
+def _prompt_gemini(prompt, system_prompt=None):
+    gemini_model = _get_gemini_model()
+    chat = gemini_model.start_chat()
+    intro = f"{system_prompt}\n" if system_prompt else ""
+    response = chat.send_message(f"{intro}{prompt}")
+    return response.text.strip()
 
-Values:
-{desc}
+# --- Public API ---
+def prompt_gpt(prompt: str, system_prompt: str = None, temperature: float = 0.7) -> str:
+    return _safe_prompt("gpt", prompt, system_prompt, temperature)
 
-Input: {text}
-Return a JSON object with keys as value names and values as scores (0-1).
-"""
-    return prompt
+def prompt_claude(prompt: str, system_prompt: str = None, temperature: float = 0.7) -> str:
+    return _safe_prompt("claude", prompt, system_prompt, temperature)
 
-__all__ = [
-    "run_llm",
-    "llm_extract_value_vector",
-    "run_llm_emotion_vector",
-    "compress_text",
-    "build_llm_value_vector_prompt",
-    "llm_peer_review",
-    "llm_consensus"
-]
+def prompt_gemini(prompt: str, context: dict = None) -> str:
+    sys_prompt = context.get("system_prompt") if context else None
+    return _safe_prompt("gemini", prompt, sys_prompt)
+
+# --- Advanced ---
+def select_best_response(responses: list[str], context: str = None) -> str:
+    """Score and choose best response from list using Claude or fallback."""
+    if not responses:
+        return ""
+    if len(responses) == 1:
+        return responses[0]
+    joined = "\n---\n".join([f"Response {i+1}:\n{r}" for i, r in enumerate(responses)])
+    prompt = (
+        "Given the following LLM responses, choose the best one based on coherence, originality, "
+        "and alignment with context:\n\n"
+        f"{joined}\n\nReturn the best response text."
+    )
+    return prompt_claude(prompt, system_prompt=context or "You are a consensus AI referee.")
+
+def run_redundant_prompt(prompt: str, temperature: float = 0.7) -> dict:
+    """Send prompt to all models and return all responses."""
+    results = {}
+    for model_id in ["gpt", "claude", "gemini"]:
+        try:
+            out = _safe_prompt(model_id, prompt, temperature=temperature)
+            results[model_id] = out
+            sleep(0.5)
+        except Exception as e:
+            log_action("llm_tools", "redundant_error", f"{model_id} failed: {e}")
+            results[model_id] = f"[{model_id} ERROR]"
+    return results

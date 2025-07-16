@@ -1,18 +1,51 @@
-flask-jwt-extended
-neo4j
+python==3.11.9
+
+# Flask stack
 Flask
+Flask-Cors
+Flask-SocketIO
+flask-jwt-extended
+
+# Async server
+eventlet
 gunicorn
 gevent
-anthropic
 gevent-websocket
-Flask-SocketIO
-python-dotenv
+
+# Graph/DB
+neo4j
+
+# OpenAI, Anthropic, Gemini, LLMs
 openai>=1.0.0
-httpx==0.27.0
-flask-socketio
-requests
-numpy
-flask-cors
-pandas
+anthropic
 google-generativeai
-eventlet
+
+# Auth, Crypto, Passwords
+python-dotenv
+werkzeug
+
+# Google APIs
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+
+# Data Science
+numpy
+pandas
+scikit-learn
+umap-learn
+hdbscan
+
+# Utilities / Logging
+requests
+psutil
+
+# Email
+# (email and smtplib are built-in, no need to list them)
+
+# Other
+httpx==0.27.0
+
+# Optional: for WordPress integration if needed, use requests
+# base64 and json are built-in; no need to list them

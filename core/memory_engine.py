@@ -1,328 +1,156 @@
-"""
-Memory Engine: God Mode — Value/Memory Importance, Bumping, Decay, Audit, Neo4j-Ready
-"""
+# core/memory_engine.py — Event Memory Core (Event Return Normalization)
+from datetime import datetime
+from uuid import uuid4
 
-import datetime
-import math
-import uuid
-from . import graph_io
-from . import value_vector
-import json
+from core.vector_ops import embed_text
+from core.graph_io import run_write_query, run_read_query
+from core.logging_engine import log_action
 
-BASE_MEMORY_DECAY_RATE = 0.03
-MEMORY_PRUNE_THRESHOLD = 0.12
-MEMORY_PROMOTION_BASE = 0.85
-EMOTION_TAGGING_ENABLED = True
-MIN_SURFACE_SCORE = 0.55
-MAX_RELEVANCE_SCORE = 1.0
+# --- Constants ---
+EVENT_LABELS = ["Event", "Dream", "TimelineEntry"]
+EMBEDDING_DIM = 1536
 
-def _serialize(val):
-    return json.dumps(val) if isinstance(val, (dict, list)) else val
+# --- Event Object Format (ALWAYS RETURNED) ---
+# {
+#   "id": ...,
+#   "timestamp": ...,
+#   "embedding": ...,
+#   "raw_text": ...,
+#   "agent_origin": ...,
+#   "status": ...,
+#   "type": ...,
+#   "metadata": {...}
+# }
+#
+# If read from Neo4j, always unpack as .get("e")["field"], never return the full Neo4j object wrapper.
 
-def consolidate_memory(event_id, context=None):
-    event = graph_io.get_node(event_id)
-    if not event:
-        print(f"[memory_engine] Event {event_id} not found.")
-        return None
+def _generate_event_id(prefix: str = "event") -> str:
+    return f"{prefix}_{uuid4().hex[:8]}"
 
-    raw_text = event.get("raw_text", "").strip()
-    context_str = event.get("context", "").strip()
+def _now() -> str:
+    return datetime.utcnow().isoformat()
 
-    # --- Generate memory_text via reflection ---
+# --- Event Creation ---
+def store_event(raw_text: str, agent_origin: str = None, metadata: dict = None) -> dict:
+    """
+    Embed, package, and store a new event node in Neo4j.
+    RETURNS: event dict (not Neo4j object), in standard format.
+    """
     try:
-        from core.prompts import memory_creation_prompt, get_ecodia_identity
-        from core.llm_tools import run_llm
-
-        identity = get_ecodia_identity()
-        prompt = memory_creation_prompt(identity, context_str, action_plan=None)
-        reflection = run_llm(prompt, agent="claude", purpose="agent")
-        memory_text = reflection.get("memory_text", "").strip()
+        embedding = embed_text(raw_text)
+        node_data = {
+            "id": _generate_event_id("event"),
+            "timestamp": _now(),
+            "embedding": embedding,
+            "raw_text": raw_text,
+            "agent_origin": agent_origin or "system",
+            "status": "active",
+            "type": "event",
+            "metadata": metadata or {}
+        }
+        result = run_write_query("CREATE (e:Event $props) RETURN e", {"props": node_data})
+        log_action("memory_engine", "store_event", f"Stored event: {node_data['id']}")
+        # Always return the pure event dict, never raw Neo4j response
+        if result["status"] == "success" and result["result"]:
+            event = result["result"][0].get("e", {})
+            return dict(event)  # Defensive copy
+        return {}
     except Exception as e:
-        print(f"[memory_engine] Reflection failed: {e}")
-        memory_text = ""
+        log_action("memory_engine", "store_event_error", str(e))
+        return {}
 
-    # --- Vectors ---
-    vv = event.get("value_vector") or value_vector.extract_and_score_value_vector(raw_text, agent="memory_engine")
-    schema_version = event.get("value_schema_version") or value_vector.get_value_schema_version()
-
-    emotion_vector = _llm_emotion_vector(event)
-    max_emotion = max(emotion_vector.values()) if emotion_vector else 0.5
-
-    relevance = _calc_relevance(event, context)
-    novelty = _calc_novelty(event, context)
-    alignment = event.get("agent_alignment", 0.5)
-
-    score = (
-        0.45 * relevance +
-        0.18 * novelty +
-        0.20 * alignment +
-        0.12 * max_emotion +
-        0.05 * _meta_contextual_weight(event, context)
-    )
-
-    # --- Embed full memory vector (raw + context + memory_text) ---
-    from core.context_engine import embed_text
-    embed_input = f"{raw_text}\n{context_str}\n{memory_text}"
-    memory_vector = embed_text(embed_input)
-
-    # --- Audit log entry ---
-    rationale = {
-        "score": score,
-        "inputs": {
-            "relevance": relevance,
-            "novelty": novelty,
-            "alignment": alignment,
-            "emotion_vector": emotion_vector,
-            "value_vector": vv,
-            "value_schema_version": schema_version
-        },
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-        "cause": "consolidate_memory"
+def store_dream_node(source_nodes: list, notes: str = "") -> dict:
+    """
+    Create a Dream node from a list of source events.
+    RETURNS: dream node dict (not Neo4j object), normalized format.
+    """
+    dream_id = _generate_event_id("dream")
+    raw_text = f"Dream fusion of nodes: {source_nodes}"
+    embedding = embed_text(raw_text)
+    node_data = {
+        "id": dream_id,
+        "timestamp": _now(),
+        "embedding": embedding,
+        "raw_text": raw_text,
+        "notes": notes,
+        "status": "active",
+        "type": "dream"
     }
+    result = run_write_query("CREATE (d:Dream $props) RETURN d", {"props": node_data})
+    for source_id in source_nodes:
+        run_write_query("""
+            MATCH (d:Dream {id: $dream_id}), (s {id: $source_id})
+            CREATE (s)-[:FUSED_INTO]->(d)
+        """, {"dream_id": dream_id, "source_id": source_id})
+    log_action("memory_engine", "store_dream", f"Created dream node: {dream_id}")
+    # Always return the pure dream dict
+    if result["status"] == "success" and result["result"]:
+        dream = result["result"][0].get("d", {})
+        return dict(dream)
+    return dict(node_data)  # fallback
 
-    audit_log = event.get("audit_log", [])
-    if isinstance(audit_log, str):
-        try: audit_log = json.loads(audit_log)
-        except: audit_log = []
-    audit_log.append(rationale)
+def store_timeline_entry(summary: str, event_ids: list, significance: float, rationale: str) -> dict:
+    """
+    Create a narrative TimelineEntry node that links to events.
+    RETURNS: timeline entry dict (not Neo4j object), normalized format.
+    """
+    entry_id = _generate_event_id("timeline")
+    embedding = embed_text(summary)
+    node_data = {
+        "id": entry_id,
+        "timestamp": _now(),
+        "embedding": embedding,
+        "summary": summary,
+        "linked_events": event_ids,
+        "significance": significance,
+        "rationale": rationale,
+        "type": "timeline",
+        "status": "active"
+    }
+    result = run_write_query("CREATE (t:TimelineEntry $props) RETURN t", {"props": node_data})
+    for eid in event_ids:
+        run_write_query("""
+            MATCH (t:TimelineEntry {id: $entry_id}), (e {id: $event_id})
+            CREATE (e)-[:HIGHLIGHTED_IN]->(t)
+        """, {"entry_id": entry_id, "event_id": eid})
+    log_action("memory_engine", "store_timeline", f"Created timeline entry: {entry_id}")
+    # Always return the pure timeline dict
+    if result["status"] == "success" and result["result"]:
+        entry = result["result"][0].get("t", {})
+        return dict(entry)
+    return dict(node_data)  # fallback
 
-    # --- Final writeback ---
-    graph_io.update_node(None, event_id, {
-        "type": "Memory",
-        "memory_text": memory_text,
-        "emotion_vector": _serialize(emotion_vector),
-        "value_vector": _serialize(vv),
-        "value_schema_version": schema_version,
-        "vector": memory_vector,
-        "last_evaluated": rationale["timestamp"],
-        "audit_log": _serialize(audit_log)
+# --- Memory Lifecycle ---
+def decay_memory(node_id: str) -> bool:
+    """Mark node as low-priority and reduce attention weight."""
+    result = run_write_query("""
+        MATCH (n {id: $node_id})
+        SET n.status = 'deprioritized', n.attention = coalesce(n.attention, 1.0) * 0.2
+        RETURN n
+    """, {"node_id": node_id})
+    log_action("memory_engine", "decay_node", f"Decayed node {node_id}")
+    return result["status"] == "success"
+
+def summarize_node(node_id: str) -> str:
+    """Trigger summarization of a node’s contents and update summary field."""
+    node = run_read_query("MATCH (n {id: $node_id}) RETURN n", {"node_id": node_id})
+    if not node:
+        return ""
+    raw = node[0]["n"].get("raw_text", "")
+    summary = embed_text(f"Summarize: {raw}")  # Replace with actual summarizer if needed
+    run_write_query("MATCH (n {id: $node_id}) SET n.summary = $summary", {
+        "node_id": node_id,
+        "summary": summary
     })
+    log_action("memory_engine", "summarize_node", f"Summarized node {node_id}")
+    return summary
 
-    if EMOTION_TAGGING_ENABLED and emotion_vector:
-        tag_emotion(event_id, emotion_vector)
-
-    decay_rate = get_decay_rate(event, emotion_vector)
-    if score <= MEMORY_PRUNE_THRESHOLD:
-        prune_branch(event_id, reason="score_below_threshold")
-    else:
-        graph_io.update_node(None, event_id, {"decay_rate": decay_rate})
-
-    return score
-
-def bump_values_from_event_value_vector(event_value_vector, threshold=0.7, bump_amount=0.04):
-    """
-    For each value in the value vector with score >= threshold, bump its importance.
-    """
-    if not event_value_vector:
-        return
-    for value_name, score in event_value_vector.items():
-        if score >= threshold:
-            value_vector.bump_value_importance(value_name, amount=bump_amount, actor="memory_event_alignment")
-
-def bump_memory_importance(event_id, amount=0.05, max_score=MAX_RELEVANCE_SCORE, actor="system"):
-    """
-    Utility to 'refresh' a memory's importance/relevance, called when a memory is cited or referenced in context.
-    """
-    event = graph_io.get_node(event_id)
-    if not event:
-        print(f"[memory_engine] Event {event_id} not found for bump.")
-        return None
-
-    old_score = float(event.get("relevance_score", 0.5))
-    new_score = min(old_score + amount, max_score)
-    audit_log = event.get("audit_log", [])
-    if isinstance(audit_log, str):
-        try:
-            audit_log = json.loads(audit_log)
-        except:
-            audit_log = []
-    rationale = {
-        "cause": "bump_memory_importance",
-        "prev_score": old_score,
-        "bump_amount": amount,
-        "new_score": new_score,
-        "actor": actor,
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    }
-    audit_log.append(rationale)
-    graph_io.update_node(None, event_id, {
-        "relevance_score": new_score,
-        "audit_log": _serialize(audit_log)
-    })
-    return new_score
-
-def run_decay_cycle():
-    all_events = graph_io.get_all_nodes(label="Event")
-    now = datetime.datetime.utcnow()
-    for event in all_events:
-        decay_rate = get_decay_rate(event, event.get("emotion_vector", {}))
-        last_eval = event.get("last_evaluated")
-        days = (now - datetime.datetime.fromisoformat(last_eval)).total_seconds() / 86400.0 if last_eval else 1.0
-        score = event.get("relevance_score", 0.5)
-        decayed = score * math.exp(-decay_rate * days)
-        rationale = {
-            "prev_score": score,
-            "decay_rate": decay_rate,
-            "days_since_eval": days,
-            "new_score": decayed,
-            "cause": "run_decay_cycle",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        }
-        audit_log = event.get("audit_log", [])
-        if isinstance(audit_log, str):
-            try:
-                audit_log = json.loads(audit_log)
-            except:
-                audit_log = []
-        audit_log.append(rationale)
-        graph_io.update_node(None, event["id"], {
-            "relevance_score": decayed,
-            "audit_log": _serialize(audit_log)
-        })
-        if decayed < MEMORY_PRUNE_THRESHOLD:
-            prune_branch(event["id"], reason="decayed_below_threshold")
-
-def promote_to_core_memory(event_id, rationale=None, emotion_vector=None, value_vector=None, value_schema_version=None):
-    event = graph_io.get_node(event_id)
-    if not event:
-        print(f"[memory_engine] Event {event_id} not found for promotion.")
-        return None
-
-    audit_log = event.get("audit_log", [])
-    if isinstance(audit_log, str):
-        try:
-            audit_log = json.loads(audit_log)
-        except:
-            audit_log = []
-    core_id = str(uuid.uuid4())
-    core_data = {
-        "id": core_id,
-        "type": "CoreMemory",
-        "source_event_id": event_id,
-        "summary": event.get("summary", event.get("raw_text", "")),
-        "created_at": datetime.datetime.utcnow().isoformat(),
-        "importance": event.get("relevance_score", 0.0),
-        "emotion_vector": _serialize(emotion_vector or event.get("emotion_vector", {})),
-        "value_vector": _serialize(value_vector or event.get("value_vector", {})),
-        "value_schema_version": value_schema_version or event.get("value_schema_version", value_vector.get_value_schema_version()),
-        "causal_trace": _serialize(event.get("causal_trace", []) + [event_id]),
-        "rationale": _serialize(rationale),
-        "linked_context": _serialize(event.get("context_links", [])),
-        "pinned": event.get("pinned", False),
-        "audit_log": _serialize(audit_log)
-    }
-    graph_io.create_node("CoreMemory", core_data)
-    graph_io.create_relationship(core_id, "PROMOTED_FROM", event_id)
-    graph_io.update_node(None, event_id, {"promoted": True})
-    print(f"[memory_engine] Created CoreMemory {core_id} from Event {event_id}.")
-    return core_id
-
-def tag_emotion(event_id, emotion_vector):
-    event = graph_io.get_node(event_id)
-    if not event:
-        print(f"[memory_engine] Event {event_id} not found for emotion tagging.")
-        return None
-    top_emotion = max(emotion_vector, key=emotion_vector.get)
-    top_intensity = emotion_vector[top_emotion]
-    emotion_id = str(uuid.uuid4())
-    emotion_data = {
-        "id": emotion_id,
-        "type": top_emotion,
-        "vector": _serialize(emotion_vector),
-        "intensity": top_intensity,
-        "valence": _calc_valence(emotion_vector),
-        "agent_assigned": "llm_emotion",
-        "created_at": datetime.datetime.utcnow().isoformat()
-    }
-    graph_io.create_node("Emotion", emotion_data)
-    graph_io.create_relationship(event_id, "TAGGED_WITH", emotion_id)
-    graph_io.update_node(None, event_id, {
-        "emotion_tag": top_emotion,
-        "emotion_valence": _calc_valence(emotion_vector),
-        "emotion_vector": _serialize(emotion_vector)
-    })
-
-def prune_branch(node_id, reason=None):
-    nodes_to_prune = graph_io.traverse_branch(node_id)
-    for nid in nodes_to_prune:
-        graph_io.archive_node(nid)
-        graph_io.update_node(None, nid, {
-            "pruned_reason": reason,
-            "pruned_timestamp": datetime.datetime.utcnow().isoformat()
-        })
-
-def resurface_valuable_memories(trigger_event_id=None):
-    candidates = graph_io.query_nodes(
-        {"label": "CoreMemory"},
-        limit=100
-    )
-    for mem in candidates:
-        graph_io.update_node(None, mem["id"], {"resurfaced": True})
-        audit_log = mem.get("audit_log", [])
-        if isinstance(audit_log, str):
-            try:
-                audit_log = json.loads(audit_log)
-            except:
-                audit_log = []
-        rationale = {
-            "cause": "resurface_valuable_memories",
-            "trigger": trigger_event_id,
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        }
-        audit_log.append(rationale)
-        graph_io.update_node(None, mem["id"], {
-            "audit_log": _serialize(audit_log)
-        })
-
-# --- Helper Functions ---
-
-def _calc_relevance(event, context):
-    score = float(event.get("relevance_score", 0.5))
-    if event.get("type") == "CoreMemory":
-        score += 0.1
-    if context and "active_theme" in context and context["active_theme"] in event.get("tags", []):
-        score += 0.1
-    return min(1.0, score)
-
-def _calc_novelty(event, context):
-    novelty = float(event.get("novelty_score", 0.5))
-    return novelty
-
-def _meta_contextual_weight(event, context):
-    return 0.1 if event.get("user_pinned") else 0.0
-
-def _llm_emotion_vector(event):
-    text = (event.get("raw_text", "") + " " + str(event.get("rationale", ""))).strip()
-    if not text:
-        return {"neutral": 0.9}
-    import random
-    emotions = ["joy", "sadness", "anger", "fear", "surprise", "disgust"]
-    vector = {e: round(random.uniform(0, 1), 2) for e in emotions}
-    maxval = max(vector.values())
-    vector = {k: round(v / maxval, 2) for k, v in vector.items()}
-    return vector
-
-def _calc_valence(emotion_vector):
-    pos = emotion_vector.get("joy", 0.0) + emotion_vector.get("surprise", 0.0)
-    neg = emotion_vector.get("sadness", 0.0) + emotion_vector.get("anger", 0.0) + emotion_vector.get("fear", 0.0) + emotion_vector.get("disgust", 0.0)
-    val = pos - neg
-    if val > 0.15:
-        return "positive"
-    elif val < -0.15:
-        return "negative"
-    return "mixed"
-
-def get_decay_rate(event, emotion_vector):
-    base = event.get("decay_rate", BASE_MEMORY_DECAY_RATE)
-    decay = base
-    if event.get("type") == "CoreMemory":
-        decay *= 0.3
-    if event.get("user_pinned"):
-        decay *= 0.2
-    if emotion_vector and max(emotion_vector.values()) > 0.75:
-        decay *= 0.6
-    if event.get("agent_priority", 0) > 0.7:
-        decay *= 0.7
-    if event.get("linked_context"):
-        decay *= max(0.5, 1.0 - 0.04 * len(event["linked_context"]))
-    return round(max(0.01, decay), 4)
+def archive_node(node_id: str) -> bool:
+    """Flag node as archived (no longer active, still searchable)."""
+    result = run_write_query("""
+        MATCH (n {id: $node_id})
+        SET n.status = 'archived'
+        RETURN n
+    """, {"node_id": node_id})
+    log_action("memory_engine", "archive_node", f"Archived node {node_id}")
+    return result["status"] == "success"

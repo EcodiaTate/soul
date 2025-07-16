@@ -113,10 +113,7 @@ def cosine_similarity(vec1, vec2):
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
 
 def retrieve_similar_context(vector, top_k=5, node_type="Event"):
-    """
-    Finds top_k similar nodes of type `node_type` based on vector similarity.
-    """
-    all_nodes = query_nodes(node_type, limit=100)
+    all_nodes = query_nodes({"label": node_type}, limit=100)
     scored = []
     for node in all_nodes:
         emb = node.get("embedding")
@@ -125,6 +122,7 @@ def retrieve_similar_context(vector, top_k=5, node_type="Event"):
             scored.append((score, node))
     scored.sort(reverse=True, key=lambda x: x[0])
     return [node for _, node in scored[:top_k]]
+
 
 def load_relevant_context(vector, top_k=5):
     """

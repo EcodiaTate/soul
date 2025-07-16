@@ -9,16 +9,16 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASS", "password")
 
-_driver = None
+driver = None
 
-def get_driver():
-    global _driver
-    if _driver is None:
-        _driver = GraphDatabase.driver(
+def getdriver():
+    global driver
+    if driver is None:
+        driver = GraphDatabase.driver(
             os.getenv("NEO4J_URI"),
             auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASS"))
         )
-    return _driver
+    return driver
 
 # --- MAIN CONTEXT ENGINE HELPERS ---
 

@@ -52,11 +52,11 @@ def create_app():
         return jsonify({"status": "ok"})
 
     # Clean Neo4j connection
-    from core.graph_io import get_driver
+    from core.graph_io import getdriver
 
     @app.teardown_appcontext
-    def close_driver(exception=None):
-        driver = get_driver()
+    def closedriver(exception=None):
+        driver = getdriver()
         driver.close()
         print("[app] Closed Neo4j driver connection.")
 

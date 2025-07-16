@@ -22,8 +22,8 @@ import json
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-from core.graph_io import get_driver
-driver = get_driver()
+from core.graph_io import getdriver
+driver = getdriver()
 
 events_bp = Blueprint('events', __name__)
 

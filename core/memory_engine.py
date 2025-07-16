@@ -61,7 +61,7 @@ def consolidate_memory(event_id, context=None):
     )
 
     # --- Embed full memory vector (raw + context + memory_text) ---
-    from core.embedding import embed_text
+    from core.context_engine import embed_text
     embed_input = f"{raw_text}\n{context_str}\n{memory_text}"
     memory_vector = embed_text(embed_input)
 

@@ -6,7 +6,7 @@ from core.prompts import (
     get_ecodia_identity
 )
 from core.llm_tools import run_llm
-from core.vector_search import search_nodes_by_text
+from core.graph_io import search_nodes_by_text
 
 
 def generate_chat_reply(raw_text: str, context_blocks: list[str] = None) -> str:

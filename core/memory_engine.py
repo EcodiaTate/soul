@@ -1,11 +1,10 @@
 """
-Memory Engine: God Mode — All TODOs Complete, Value Vectors & Audit-Ready, Neo4j-safe
+Memory Engine: God Mode — Value/Memory Importance, Bumping, Decay, Audit, Neo4j-Ready
 """
 
 import datetime
 import math
 import uuid
-
 from . import graph_io
 from . import value_vector
 import json
@@ -15,6 +14,7 @@ MEMORY_PRUNE_THRESHOLD = 0.12
 MEMORY_PROMOTION_BASE = 0.85
 EMOTION_TAGGING_ENABLED = True
 MIN_SURFACE_SCORE = 0.55
+MAX_RELEVANCE_SCORE = 1.0
 
 def _serialize(val):
     return json.dumps(val) if isinstance(val, (dict, list)) else val
@@ -54,6 +54,9 @@ def evaluate_event(event_id, context=None):
         0.12 * max_emotion +
         0.05 * _meta_contextual_weight(event, context)
     )
+
+    # --- Value importance bumping: Bump any values with strong alignment
+    bump_values_from_event_value_vector(vv)
 
     # Dynamic promotion threshold
     promotion_threshold = event.get("promotion_threshold", MEMORY_PROMOTION_BASE)
@@ -106,6 +109,79 @@ def evaluate_event(event_id, context=None):
         graph_io.update_node(None, event_id, {"decay_rate": decay_rate})
 
     return score
+
+def bump_values_from_event_value_vector(event_value_vector, threshold=0.7, bump_amount=0.04):
+    """
+    For each value in the value vector with score >= threshold, bump its importance.
+    """
+    if not event_value_vector:
+        return
+    for value_name, score in event_value_vector.items():
+        if score >= threshold:
+            value_vector.bump_value_importance(value_name, amount=bump_amount, actor="memory_event_alignment")
+
+def bump_memory_importance(event_id, amount=0.05, max_score=MAX_RELEVANCE_SCORE, actor="system"):
+    """
+    Utility to 'refresh' a memory's importance/relevance, called when a memory is cited or referenced in context.
+    """
+    event = graph_io.get_node(event_id)
+    if not event:
+        print(f"[memory_engine] Event {event_id} not found for bump.")
+        return None
+
+    old_score = float(event.get("relevance_score", 0.5))
+    new_score = min(old_score + amount, max_score)
+    audit_log = event.get("audit_log", [])
+    if isinstance(audit_log, str):
+        try:
+            audit_log = json.loads(audit_log)
+        except:
+            audit_log = []
+    rationale = {
+        "cause": "bump_memory_importance",
+        "prev_score": old_score,
+        "bump_amount": amount,
+        "new_score": new_score,
+        "actor": actor,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    }
+    audit_log.append(rationale)
+    graph_io.update_node(None, event_id, {
+        "relevance_score": new_score,
+        "audit_log": _serialize(audit_log)
+    })
+    return new_score
+
+def run_decay_cycle():
+    all_events = graph_io.get_all_nodes(label="Event")
+    now = datetime.datetime.utcnow()
+    for event in all_events:
+        decay_rate = get_decay_rate(event, event.get("emotion_vector", {}))
+        last_eval = event.get("last_evaluated")
+        days = (now - datetime.datetime.fromisoformat(last_eval)).total_seconds() / 86400.0 if last_eval else 1.0
+        score = event.get("relevance_score", 0.5)
+        decayed = score * math.exp(-decay_rate * days)
+        rationale = {
+            "prev_score": score,
+            "decay_rate": decay_rate,
+            "days_since_eval": days,
+            "new_score": decayed,
+            "cause": "run_decay_cycle",
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        }
+        audit_log = event.get("audit_log", [])
+        if isinstance(audit_log, str):
+            try:
+                audit_log = json.loads(audit_log)
+            except:
+                audit_log = []
+        audit_log.append(rationale)
+        graph_io.update_node(None, event["id"], {
+            "relevance_score": decayed,
+            "audit_log": _serialize(audit_log)
+        })
+        if decayed < MEMORY_PRUNE_THRESHOLD:
+            prune_branch(event["id"], reason="decayed_below_threshold")
 
 def promote_to_core_memory(event_id, rationale=None, emotion_vector=None, value_vector=None, value_schema_version=None):
     event = graph_io.get_node(event_id)
@@ -166,37 +242,6 @@ def tag_emotion(event_id, emotion_vector):
         "emotion_valence": _calc_valence(emotion_vector),
         "emotion_vector": _serialize(emotion_vector)
     })
-
-def run_decay_cycle():
-    all_events = graph_io.get_all_nodes(label="Event")
-    now = datetime.datetime.utcnow()
-    for event in all_events:
-        decay_rate = get_decay_rate(event, event.get("emotion_vector", {}))
-        last_eval = event.get("last_evaluated")
-        days = (now - datetime.datetime.fromisoformat(last_eval)).total_seconds() / 86400.0 if last_eval else 1.0
-        score = event.get("relevance_score", 0.5)
-        decayed = score * math.exp(-decay_rate * days)
-        rationale = {
-            "prev_score": score,
-            "decay_rate": decay_rate,
-            "days_since_eval": days,
-            "new_score": decayed,
-            "cause": "run_decay_cycle",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        }
-        audit_log = event.get("audit_log", [])
-        if isinstance(audit_log, str):
-            try:
-                audit_log = json.loads(audit_log)
-            except:
-                audit_log = []
-        audit_log.append(rationale)
-        graph_io.update_node(None, event["id"], {
-            "relevance_score": decayed,
-            "audit_log": _serialize(audit_log)
-        })
-        if decayed < MEMORY_PRUNE_THRESHOLD:
-            prune_branch(event["id"], reason="decayed_below_threshold")
 
 def prune_branch(node_id, reason=None):
     nodes_to_prune = graph_io.traverse_branch(node_id)

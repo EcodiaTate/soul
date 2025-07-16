@@ -1,7 +1,7 @@
 """
-value_vector.py — Unified Value Vector Schema, Scoring, Mutation, and Audit Engine
+value_vector.py — Unified Value/Importance Schema, Scoring, Dynamic Decay, and Audit Engine
 Author: Ecodia Dev
-Last updated: 2025-07-15
+Last updated: 2025-07-16
 """
 
 import uuid
@@ -13,12 +13,12 @@ from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 
 from core import graph_io
-from .llm_tools import llm_extract_value_vector, run_llm_emotion_vector, run_llm
-# === GLOBALS ===
-VALUE_VECTOR_PROMPT_VERSION = 1
+
+VALUE_VECTOR_PROMPT_VERSION = 2
 AUDIT_LOG_NODE_LABEL = "ValueSchemaAudit"
 VALUE_NODE_LABEL = "Value"
 VECTOR_FIELD = "value_vector"
+IMPORTANCE_FIELD = "importance"
 SCHEMA_VERSION_FIELD = "value_schema_version"
 
 logger = logging.getLogger("value_vector")
@@ -31,11 +31,9 @@ def _now():
     return datetime.datetime.utcnow().isoformat()
 
 def _serialize(val):
-    # Serialize any dict/list to a JSON string for Neo4j
     return json.dumps(val) if isinstance(val, (dict, list)) else val
 
 def _parse(val):
-    # Parse JSON fields from Neo4j, fallback to original
     if isinstance(val, str):
         try:
             return json.loads(val)
@@ -43,7 +41,7 @@ def _parse(val):
             return val
     return val
 
-def _new_value_node(name: str, label: str, description: str, actor: str) -> Dict[str, Any]:
+def _new_value_node(name: str, label: str, description: str, actor: str, importance: float = 0.5) -> Dict[str, Any]:
     return {
         "uuid": str(uuid.uuid4()),
         "name": name,
@@ -51,7 +49,8 @@ def _new_value_node(name: str, label: str, description: str, actor: str) -> Dict
         "description": description,
         "created_at": _now(),
         "created_by": actor,
-        "active": True
+        "active": True,
+        "importance": float(importance)
     }
 
 def _log_schema_change(old_pool, new_pool, actor, action, note=""):
@@ -64,7 +63,6 @@ def _log_schema_change(old_pool, new_pool, actor, action, note=""):
         "new_pool": new_pool
     }
     logger.info(f"SCHEMA_CHANGE: {json.dumps(payload)}")
-    # Audit node: all complex fields are serialized
     graph_io.create_node(AUDIT_LOG_NODE_LABEL, {k: _serialize(v) for k, v in payload.items()})
 
 # === VALUE POOL & SCHEMA MANAGEMENT ===
@@ -88,9 +86,9 @@ def update_value_pool(new_pool: List[Dict[str, Any]], actor: str, note: str = ""
     _value_pool_cache = new_pool
     _schema_version_cache = new_version
 
-def add_value_node(name: str, label: str, desc: str, actor: str) -> Dict[str, Any]:
+def add_value_node(name: str, label: str, desc: str, actor: str, importance: float = 0.5) -> Dict[str, Any]:
     pool, _ = get_current_value_pool()
-    new_node = _new_value_node(name, label, desc, actor)
+    new_node = _new_value_node(name, label, desc, actor, importance)
     pool.append(new_node)
     update_value_pool(pool, actor, note=f"Added value {name}")
     graph_io.create_node(VALUE_NODE_LABEL, new_node)
@@ -120,12 +118,49 @@ def edit_value_node(node_uuid: str, actor: str, **fields) -> Optional[Dict[str, 
             return v
     return None
 
-def reset_to_blank_slate(actor: str):
+def set_value_importance(node_uuid: str, importance: float, actor: str) -> Optional[Dict[str, Any]]:
     pool, _ = get_current_value_pool()
     for v in pool:
-        v["active"] = False
-        graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"active": False})
-    update_value_pool([], actor, note="Reset to blank slate")
+        if v["uuid"] == node_uuid:
+            v["importance"] = float(np.clip(importance, 0.0, 1.0))
+            update_value_pool(pool, actor, note=f"Changed importance for {node_uuid}")
+            graph_io.update_node(VALUE_NODE_LABEL, node_uuid, {"importance": v["importance"]})
+            return v
+    return None
+
+def decay_all_value_importance(rate: float = 0.01, min_importance: float = 0.01, actor: str = "system"):
+    pool, _ = get_current_value_pool()
+    changed = False
+    for v in pool:
+        old = v.get("importance", 0.5)
+        new_imp = max(min_importance, old * (1.0 - rate))
+        if abs(new_imp - old) > 1e-6:
+            v["importance"] = new_imp
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"importance": new_imp})
+            changed = True
+            # --- Audit each decay
+            rationale = {
+                "cause": "decay_value_importance",
+                "prev_importance": old,
+                "rate": rate,
+                "new_importance": new_imp,
+                "actor": actor,
+                "timestamp": _now()
+            }
+            audit_log = v.get("audit_log", [])
+            if isinstance(audit_log, str):
+                try:
+                    audit_log = json.loads(audit_log)
+                except:
+                    audit_log = []
+            audit_log.append(rationale)
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"audit_log": _serialize(audit_log)})
+    if changed:
+        update_value_pool(pool, actor, note="Decay run on all value importance")
+
+def run_value_decay_cycle(rate: float = 0.01, min_importance: float = 0.01, actor: str = "system"):
+    """Shortcut for regular decay (call after each CE or on schedule)."""
+    decay_all_value_importance(rate, min_importance, actor)
 
 def load_pool_from_db() -> Tuple[List[Dict[str, Any]], int]:
     pool = graph_io.query_nodes({"label": VALUE_NODE_LABEL, "active": True})
@@ -142,7 +177,6 @@ def save_pool_to_db():
 
 def get_audit_log(limit=100) -> List[Dict[str, Any]]:
     logs = graph_io.query_nodes({"label": AUDIT_LOG_NODE_LABEL}, limit=limit)
-    # Parse complex fields if they are strings
     for log in logs:
         for k in list(log.keys()):
             log[k] = _parse(log[k])
@@ -154,10 +188,15 @@ def get_value_names() -> List[str]:
     pool, _ = get_current_value_pool()
     return [v["name"] for v in pool if v["active"]]
 
+def get_value_importances() -> Dict[str, float]:
+    pool, _ = get_current_value_pool()
+    return {v["name"]: v.get("importance", 0.5) for v in pool if v["active"]}
+
 def llm_extract_value_vector(raw_text: str, context: dict = {}, agent: str = "") -> Dict[str, float]:
     frompool, version = get_current_value_pool()
     axes = [{"name": v["name"], "desc": v["description"]} for v in frompool if v["active"]]
     prompt = build_llm_value_vector_prompt(raw_text, axes, version)
+    from .llm_tools import run_llm
     response = run_llm(prompt, agent=agent)
     try:
         scores = json.loads(response)
@@ -215,7 +254,44 @@ def get_node_value_vector(node_id: str) -> Optional[Dict[str, float]]:
         return None
     return _parse(vec_str)
 
-# === CONFLICT/ALIGNMENT DETECTION ===
+# === VALUE IMPORTANCE UPDATE UTILITIES ===
+
+def bump_value_importance(name: str, amount: float = 0.05, max_importance: float = 1.0, actor: str = "system"):
+    """
+    Increases importance for value 'name'. Robust to missing names; adds audit log.
+    """
+    pool, _ = get_current_value_pool()
+    found = False
+    for v in pool:
+        if v["name"] == name and v["active"]:
+            old = v.get("importance", 0.5)
+            new_imp = min(max_importance, old + amount)
+            v["importance"] = new_imp
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"importance": new_imp})
+            # --- Audit bump
+            rationale = {
+                "cause": "bump_value_importance",
+                "prev_importance": old,
+                "bump_amount": amount,
+                "new_importance": new_imp,
+                "actor": actor,
+                "timestamp": _now()
+            }
+            audit_log = v.get("audit_log", [])
+            if isinstance(audit_log, str):
+                try:
+                    audit_log = json.loads(audit_log)
+                except:
+                    audit_log = []
+            audit_log.append(rationale)
+            graph_io.update_node(VALUE_NODE_LABEL, v["uuid"], {"audit_log": _serialize(audit_log)})
+            found = True
+    if found:
+        update_value_pool(pool, actor, note=f"Bumped importance for {name}")
+    else:
+        logger.info(f"[value_vector] bump_value_importance: Value '{name}' not found or inactive.")
+
+# === CONFLICT/ALIGNMENT DETECTION & FUSION ===
 
 def value_vector_conflict(vec_a: Dict[str, float], vec_b: Dict[str, float], threshold: float = 0.5) -> Dict[str, Any]:
     names = set(vec_a.keys()) | set(vec_b.keys())
@@ -263,9 +339,13 @@ def fuse_value_vectors(vectors: List[Dict[str, float]]) -> Dict[str, float]:
     if not vectors:
         return {}
     names = get_value_names()
+    importances = get_value_importances()
     out = {}
     for name in names:
-        out[name] = float(np.mean([v.get(name, 0.0) for v in vectors]))
+        # Weighted average by value importance
+        weighted_scores = [v.get(name, 0.0) * importances.get(name, 0.5) for v in vectors]
+        total_weight = sum(importances.get(name, 0.5) for _ in vectors)
+        out[name] = float(sum(weighted_scores) / total_weight) if total_weight > 0 else 0.0
     return out
 
 __all__ = [
@@ -275,11 +355,15 @@ __all__ = [
     "add_value_node",
     "remove_value_node",
     "edit_value_node",
-    "reset_to_blank_slate",
+    "set_value_importance",
+    "decay_all_value_importance",
+    "run_value_decay_cycle",
+    "bump_value_importance",
     "load_pool_from_db",
     "save_pool_to_db",
     "get_audit_log",
     "get_value_names",
+    "get_value_importances",
     "llm_extract_value_vector",
     "score_value_vector",
     "embed_value_vector",

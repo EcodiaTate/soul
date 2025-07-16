@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
-# TODO introduce emotion vectors - static vector with ratings
+
 load_dotenv()
 
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
@@ -13,8 +13,12 @@ NEO4J_PASSWORD = os.environ.get("NEO4J_PASS", "password")
 
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
-# --- Helper: fields that should always be JSON-encoded if non-primitive ---
-COMPLEX_FIELDS = {"value_vector", "context", "audit_log", "action_plan", "topics", "causal_trace"}
+# --- Fields that should always be JSON-encoded if non-primitive ---
+COMPLEX_FIELDS = {
+    "value_vector", "emotion_vector", "context", "audit_log",
+    "action_plan", "topics", "causal_trace", "agent_responses",
+    "critiques", "embedding"
+}
 
 def _safe_props(properties: Dict[str, Any]) -> Dict[str, Any]:
     """Serialize all complex fields to JSON strings for Neo4j."""
@@ -27,7 +31,6 @@ def _safe_props(properties: Dict[str, Any]) -> Dict[str, Any]:
         elif isinstance(v, list) and all(isinstance(i, (str, int, float, bool)) or i is None for i in v):
             safe[k] = v
         else:
-            # Fallback for any stray dict or custom object
             safe[k] = json.dumps(v)
     return safe
 
@@ -41,7 +44,7 @@ def _parse_complex_fields(node: Dict[str, Any]) -> Dict[str, Any]:
                 node[k] = {} if k.endswith("_vector") or k == "context" or k == "action_plan" else []
     return node
 
-# === EVENT AND VALUE VECTOR CORE ===
+# === EVENT, NODE, VALUE, CONTEXT, EMBEDDING ===
 
 def get_event_by_id(event_id: str) -> Optional[Dict[str, Any]]:
     cypher = "MATCH (e:Event {id: $event_id}) RETURN e"
@@ -52,6 +55,15 @@ def get_event_by_id(event_id: str) -> Optional[Dict[str, Any]]:
             return None
         node = dict(record["e"])
         return _parse_complex_fields(node)
+
+def get_node(event_id: str) -> Optional[Dict[str, Any]]:
+    cypher = "MATCH (n {id: $event_id}) RETURN n LIMIT 1"
+    with driver.session() as session:
+        result = session.run(cypher, event_id=event_id)
+        record = result.single()
+        if record and "n" in record:
+            return _parse_complex_fields(dict(record["n"]))
+        return None
 
 def create_node(label: str, properties: Dict[str, Any]) -> Dict[str, Any]:
     if 'id' not in properties:
@@ -145,22 +157,28 @@ def create_relationship(source_id: str, target_id: str, rel_type: str, propertie
     with driver.session() as session:
         result = session.run(cypher, source_id=source_id, target_id=target_id, props=safe_props)
         record = result.single()
-        return dict(record["r"]) if record else {"source_id": source_id, "target_id": target_id, "rel_type": rel_type, "properties": safe_props}
+        return dict(record["r"]) if record and "r" in record else {
+            "source_id": source_id, "target_id": target_id, "rel_type": rel_type, "properties": safe_props
+        }
 
 def vector_search(query_vector: Dict[str, float], top_k: int = 8) -> List[Dict[str, Any]]:
-    return []  # stub
+    # TODO: Implement vector search (call out to Pinecone, Weaviate, or custom in-db vector sim)
+    return []
 
 def write_consensus_to_graph(consensus: Dict[str, Any]) -> Dict[str, Any]:
     consensus['id'] = consensus.get('id', str(uuid.uuid4()))
     return create_node("Consensus", consensus)
 
 def get_pending_cypher_actions() -> List[Dict[str, Any]]:
+    # TODO: implement based on your schema for storing pending cypher actions
     return []
 
 def mark_action_executed(consensus_node_id: str, action_plan: Any) -> None:
+    # TODO: update node status in Neo4j
     pass
 
 def create_schema_change_node(action_plan, result, consensus_node_id) -> Dict[str, Any]:
+    # TODO: record schema change action/result in Neo4j
     return {"id": "schema-change-id"}
 
 def run_cypher(query: str, params: Optional[Dict[str, Any]] = None) -> Any:
@@ -209,6 +227,7 @@ def mark_event_processed(node_id: str, context: Any, embedding: List[float]) -> 
         return _parse_complex_fields(node) if node else None
 
 def embed_vector_in_node(node_id: str, raw_text: str) -> List[float]:
+    # TODO: replace with real embedding logic as needed
     fake_vector = [0.0] * 1536
     if node_id:
         with driver.session() as session:
@@ -217,20 +236,10 @@ def embed_vector_in_node(node_id: str, raw_text: str) -> List[float]:
     return fake_vector
 
 def get_node_summary(node: Dict[str, Any]) -> Dict[str, Any]:
+    # Expand this for richer summarization later
     return {
         "summary": "",
         "key_insight": "",
         "origin_metadata": {},
         "relevance_score": 0.0
     }
-
-def get_node(event_id):
-    """
-    Retrieves a single node from Neo4j by its unique event ID.
-    """
-    query = """
-    MATCH (n:Event {id: $event_id})
-    RETURN n LIMIT 1
-    """
-    result = run_cypher(query, {"event_id": event_id})
-    return result[0]["n"] if result else None

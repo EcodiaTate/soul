@@ -3,8 +3,14 @@ from datetime import datetime, timezone
 from config import settings
 from neo4j import GraphDatabase
 from core.context_engine import process_single_event
-from core.graph_io import get_event_by_id
-from core.value_vector import get_current_value_pool, get_value_schema_version
+from core.graph_io import get_event_by_id, update_node
+from core.value_vector import (
+    get_current_value_pool,
+    get_value_schema_version,
+    bump_value_importance,
+    get_value_importances
+)
+from core.memory_engine import bump_memory_importance
 from core.agents import run_all_agents
 from core.consensus_engine import consensus_pipeline
 from core.socket_handlers import emit_new_event
@@ -65,18 +71,33 @@ def create_event():
     value_vector = context.get("value_vector", {})
     schema_version = context.get("value_schema_version", schema_version)
 
+    # --- BUMP: Memory & Value importance for all referenced context/value axes ---
+    # Bump the event (memory) because it’s being surfaced in context
+    try:
+        bump_memory_importance(event_id, amount=0.03, actor="event-context-surfaced")
+    except Exception:
+        pass
+    # Bump all value axes that are strongly expressed in this event
+    importances = get_value_importances()
+    for v, score in value_vector.items():
+        if score > 0.65:
+            try:
+                bump_value_importance(v, amount=0.01, actor="event-context-surfaced")
+            except Exception:
+                pass
+
     # 4. Run agents using updated universal agent mesh
     agent_input = {
         "id": event_id,
         "raw_text": raw_text,
-        "context_blocks": context,
+        "context": context,
         "value_vector": value_vector,
         "value_schema_version": schema_version,
         "timestamp": timestamp
     }
     agent_responses = run_all_agents(agent_input)
 
-    # 5. Consensus pipeline
+    # 5. Consensus pipeline (triggers further bumping, mesh, etc)
     pipeline_result = consensus_pipeline(event_id, agent_responses)
     status = pipeline_result.get("status", "unknown")
     consensus = ""
@@ -105,12 +126,8 @@ def create_event():
         update_fields[f"{name}_rationale"] = agent.get("rationale", "")
         update_fields[f"{name}_value_vector"] = json.dumps(agent.get("value_vector", {}))
 
-    set_clause = ",\n".join([f"e.{k} = ${k}" for k in update_fields])
-    with driver.session() as session:
-        session.run(f"""
-            MATCH (e:Event {{id: $id}})
-            SET {set_clause}
-        """, {"id": event_id, **update_fields})
+    # Use core.graph_io to ensure all fields are encoded properly
+    update_node("Event", event_id, update_fields)
 
     # 7. Emit event update to frontend
     emit_new_event({

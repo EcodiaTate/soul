@@ -3,7 +3,7 @@ peer_review_engine.py — 130% God Mode
 Value/Emotion Vector Mesh, Dynamic Edge Types, Memory Audit, Neo4j-Ready
 
 - Detects and resolves agent mesh conflict (score, value, rationale, emotion)
-- Generates peer critiques (vector, emotion, rationale mesh)
+- Generates peer critiques (vector, emotion, rationale mesh) using LLM-based peer_review_prompt
 - Writes PeerReview, ConflictEvent, and all mesh/contradiction edges (edge types pulled from graph dynamically)
 - All dict/list fields safely JSON-serialized for Neo4j
 - Compatible with CE-driven edge pool and schema evolution
@@ -25,8 +25,14 @@ from core.consensus_engine import build_consensus, write_consensus_to_graph
 from core.value_vector import (
     value_vector_conflict,
     multi_vector_conflict,
-    get_value_schema_version
+    get_value_schema_version,
+    get_value_names,
+    FIXED_EMOTION_AXES  # Make sure this is exposed as the fixed list in your value_vector.py
 )
+from core.prompts import peer_review_prompt, get_ecodia_identity
+from core.llm_tools import run_llm
+from core.agents import serialize_agent_response, deserialize_agent_response
+from core.context_engine import format_context_blocks
 
 CONFLICT_THRESHOLD = 0.5  # Adjust as needed for score/semantic divergence
 
@@ -71,7 +77,6 @@ def _rationales_diverge(rationales):
     return any(r != first for r in rationales[1:])
 
 def _emotion_vector_conflict(vectors, threshold=0.5):
-    # Cosine distance average
     keys = set().union(*vectors)
     def as_vec(d): return [d.get(k, 0.0) for k in keys]
     def cos_sim(v1, v2):
@@ -84,54 +89,56 @@ def _emotion_vector_conflict(vectors, threshold=0.5):
     avg_dist = sum(sims) / len(sims) if sims else 0.0
     return avg_dist > threshold
 
-# --- Peer Critique Generation ---
+# --- LLM Peer Critique Generation ---
 
 def generate_peer_critiques(agent_responses):
     """
-    Each agent critiques every other agent's rationale, value, emotion.
+    Each agent receives all others' outputs as input to an LLM peer review prompt.
     Returns a list of critique dicts (Neo4j-serializable).
     """
     critiques = []
+    value_axes = get_value_names()
+    # For full emotion axis list, make sure you expose this in value_vector.py (e.g. as FIXED_EMOTION_AXES)
+    emotion_axes = FIXED_EMOTION_AXES
+
     for i, a in enumerate(agent_responses):
-        for j, b in enumerate(agent_responses):
-            if i == j:
-                continue
-            rationale_agree = a.get("rationale", "") == b.get("rationale", "")
-            value_agree = (
-                "value_vector" in a and "value_vector" in b and
-                not value_vector_conflict(a["value_vector"], b["value_vector"])["peer_review"]
-            )
-            emotion_agree = (
-                "emotion_vector" in a and "emotion_vector" in b and
-                not _emotion_vector_conflict([a["emotion_vector"], b["emotion_vector"]])
-            )
-            critique = f"[{a.get('agent_name','?')}] reviews [{b.get('agent_name','?')}]: " \
-                       f"I {'agree' if rationale_agree and value_agree and emotion_agree else 'disagree'} with your reasoning, value weighting, and emotional assessment."
-            score = 1.0 if rationale_agree and value_agree and emotion_agree else 0.0
-            value_vector_diff = {
-                k: round(a.get("value_vector", {}).get(k, 0.0) - b.get("value_vector", {}).get(k, 0.0), 3)
-                for k in set(a.get("value_vector", {})) | set(b.get("value_vector", {}))
+        your_prior_output = json.dumps(a, ensure_ascii=False)
+        peer_outputs = [
+            json.dumps(b, ensure_ascii=False)
+            for j, b in enumerate(agent_responses) if i != j
+        ]
+        prompt = peer_review_prompt(
+            get_ecodia_identity(),
+            your_prior_output,
+            peer_outputs,
+            value_axes,
+            emotion_axes
+        )
+        llm_result = run_llm(prompt, agent=a.get("agent_name", "unknown"))
+        try:
+            review = json.loads(llm_result)
+        except Exception as e:
+            print(f"[peer_review_engine] LLM critique parse failed: {e}\nRaw: {llm_result}")
+            review = {
+                "revised_rationale": "LLM parse error",
+                "value_vector_diff": {},
+                "emotion_vector_diff": {},
+                "shifted": False
             }
-            emotion_vector_diff = {
-                k: round(a.get("emotion_vector", {}).get(k, 0.0) - b.get("emotion_vector", {}).get(k, 0.0), 3)
-                for k in set(a.get("emotion_vector", {})) | set(b.get("emotion_vector", {}))
-            }
-            critiques.append({
-                "from": a.get("agent_name", "?"),
-                "to": b.get("agent_name", "?"),
-                "critique": critique,
-                "score": score,
-                "value_vector_diff": value_vector_diff,
-                "emotion_vector_diff": emotion_vector_diff
-            })
-    print(f"[peer_review_engine] Generated {len(critiques)} peer critiques.")
+        critiques.append({
+            "from": a.get("agent_name", "?"),
+            "review": review
+        })
+    print(f"[peer_review_engine] Generated {len(critiques)} peer critiques (LLM-based).")
     return critiques
 
 def evaluate_critiques(peer_critiques):
-    scores = [c["score"] for c in peer_critiques]
-    all_positive = min(scores) > 0 if scores else False
-    print(f"[peer_review_engine] Critique alignment: {'aligned' if all_positive else 'still divergent'}.")
-    return all_positive
+    # Use 'shifted' flag from LLM output, or fall back to score logic
+    if not peer_critiques:
+        return False
+    aligned = all(c.get("review", {}).get("shifted") is False for c in peer_critiques)
+    print(f"[peer_review_engine] Critique alignment: {'aligned' if aligned else 'still divergent'}.")
+    return aligned
 
 # --- Review Node and Dynamic Edge Writing ---
 
@@ -201,7 +208,7 @@ def peer_review_pipeline(event_id, agent_responses):
     """
     Orchestrates full peer review:
     - Detects mesh conflict
-    - Generates & stores critiques
+    - Generates & stores LLM-based critiques
     - On alignment: writes consensus node
     - On unresolved: writes ConflictEvent + mesh/contradiction edges
     """
@@ -212,7 +219,6 @@ def peer_review_pipeline(event_id, agent_responses):
     peer_critiques = generate_peer_critiques(agent_responses)
     if evaluate_critiques(peer_critiques):
         consensus = build_consensus(agent_responses)
-        from core.agents import serialize_agent_response
         consensus_serialized = serialize_agent_response(consensus)
         consensus_node = write_consensus_to_graph(consensus_serialized)
         result = write_review_nodes(event_id, agent_responses, peer_critiques, "resolved")

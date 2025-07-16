@@ -12,9 +12,8 @@ from typing import List, Dict, Any, Tuple, Optional
 
 import numpy as np
 
-from core import graph_io, llm_tools
-from llm_tools import llm_extract_value_vector, run_llm_emotion_vector, run_llm
-
+from core import graph_io
+from .llm_tools import llm_extract_value_vector, run_llm_emotion_vector, run_llm
 # === GLOBALS ===
 VALUE_VECTOR_PROMPT_VERSION = 1
 AUDIT_LOG_NODE_LABEL = "ValueSchemaAudit"
@@ -157,9 +156,9 @@ def get_value_names() -> List[str]:
 
 def llm_extract_value_vector(raw_text: str, context: dict = {}, agent: str = "") -> Dict[str, float]:
     frompool, version = get_current_value_pool()
-    axes = [{"name": v["name"], "desc": v["description"]} for v in pool if v["active"]]
+    axes = [{"name": v["name"], "desc": v["description"]} for v in frompool if v["active"]]
     prompt = build_llm_value_vector_prompt(raw_text, axes, version)
-    response = llm_tools.run_llm(prompt, agent=agent)
+    response = run_llm(prompt, agent=agent)
     try:
         scores = json.loads(response)
     except Exception:

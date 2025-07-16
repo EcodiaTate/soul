@@ -192,7 +192,7 @@ def get_value_importances() -> Dict[str, float]:
     pool, _ = get_current_value_pool()
     return {v["name"]: v.get("importance", 0.5) for v in pool if v["active"]}
 
-def llm_extract_value_vector(raw_text: str, context: dict = {}, agent: str = "") -> Dict[str, float]:
+def extract_and_score_value_vector(raw_text: str, context: dict = {}, agent: str = "") -> Dict[str, float]:
     frompool, version = get_current_value_pool()
     axes = [{"name": v["name"], "desc": v["description"]} for v in frompool if v["active"]]
     prompt = build_llm_value_vector_prompt(raw_text, axes, version)
@@ -364,7 +364,7 @@ __all__ = [
     "get_audit_log",
     "get_value_names",
     "get_value_importances",
-    "llm_extract_value_vector",
+    "extract_and_score_value_vector",
     "score_value_vector",
     "embed_value_vector",
     "get_node_value_vector",

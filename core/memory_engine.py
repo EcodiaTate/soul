@@ -30,7 +30,7 @@ def evaluate_event(event_id, context=None):
     schema_version = None
     if not event.get("value_vector"):
         try:
-            vv = value_vector.llm_extract_value_vector(event.get("raw_text", ""), agent="memory_engine")
+            vv = value_vector.extract_and_score_value_vector(event.get("raw_text", ""), agent="memory_engine")
             schema_version = value_vector.get_value_schema_version()
             value_vector.embed_value_vector(event_id, vv, schema_version)
         except Exception as e:

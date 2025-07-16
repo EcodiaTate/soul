@@ -12,9 +12,10 @@ from core.vector_search import search_nodes_by_text
 def generate_chat_reply(raw_text: str, context_blocks: list[str] = None) -> str:
     """
     Generate a fast, high-quality conversational reply using Claude (purpose='chat').
-    Optionally includes relevant context blocks retrieved via vector search.
+    Optionally includes context blocks. Handles None or empty safely.
     """
     identity = get_ecodia_identity()
+    context_blocks = context_blocks or []  # fallback to empty list if None
     prompt = chat_response_prompt(identity, raw_text, context_blocks)
     response = run_llm(prompt, agent="claude", purpose="chat")
     return response.strip()
@@ -37,38 +38,51 @@ def generate_prethought_queries(raw_text: str) -> list[dict]:
                 if isinstance(q, dict) and "phrase" in q and "field" in q
             ]
         else:
-            print("[chat_agent] Prethought output not a list.")
+            print("[voice_engine] Prethought output not a list.")
             return []
     except Exception as e:
-        print(f"[chat_agent] Failed to parse prethought query list: {e}")
+        print(f"[voice_engine] Failed to parse prethought query list: {e}")
         return []
 
 
 def retrieve_context_blocks(queries: list[dict], top_k: int = 2) -> list[str]:
     """
     Perform vector searches per Claude’s query list.
-    For each {phrase, field} pair, return relevant field content from top-k matching memory nodes.
+    Returns top-k field results per query. Handles failures silently.
     """
     results = []
     for query in queries:
-        phrase = query["phrase"]
-        field = query["field"]
+        phrase = query.get("phrase")
+        field = query.get("field")
         try:
             matches = search_nodes_by_text(phrase, field=field, top_k=top_k)
             blocks = [node.get(field, "").strip() for node in matches if node.get(field)]
             results.extend(blocks)
         except Exception as e:
-            print(f"[chat_agent] Vector search error for phrase '{phrase}' on field '{field}': {e}")
+            print(f"[voice_engine] Vector search error for phrase '{phrase}' on field '{field}': {e}")
     return results
 
 
 def generate_contextual_chat_reply(raw_text: str) -> str:
     """
     Full intelligent loop:
-    1. Claude outputs desired retrieval targets (phrases + fields)
-    2. We run vector search for each pair
-    3. Claude receives curated context snippets for reply
+    1. Claude outputs what it wants to know (prethought)
+    2. We try to retrieve matching memory via vector search
+    3. If we find results, send them back with raw_text
+    4. If nothing, fallback to raw_text-only chat
     """
-    queries = generate_prethought_queries(raw_text)
-    context_blocks = retrieve_context_blocks(queries)
-    return generate_chat_reply(raw_text, context_blocks)
+    try:
+        queries = generate_prethought_queries(raw_text)
+        if not queries:
+            print("[voice_engine] No prethought queries returned, falling back to no-context mode.")
+            return generate_chat_reply(raw_text)
+
+        context_blocks = retrieve_context_blocks(queries)
+        if not context_blocks:
+            print("[voice_engine] No context blocks found, falling back to no-context mode.")
+            return generate_chat_reply(raw_text)
+
+        return generate_chat_reply(raw_text, context_blocks)
+    except Exception as e:
+        print(f"[voice_engine] Full contextual reply failed: {e}. Falling back.")
+        return generate_chat_reply(raw_text)

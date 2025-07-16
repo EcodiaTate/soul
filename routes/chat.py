@@ -93,7 +93,7 @@ def submit_chat():
 
     # --- Memory Evaluation ---
     try:
-        memory_engine.evaluate_event(event_id)
+        memory_engine.voice_engine(event_id)
     except Exception as e:
         print(f"[chat] Memory evaluation failed: {e}")
 

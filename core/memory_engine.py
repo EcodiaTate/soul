@@ -19,34 +19,39 @@ MAX_RELEVANCE_SCORE = 1.0
 def _serialize(val):
     return json.dumps(val) if isinstance(val, (dict, list)) else val
 
-def evaluate_event(event_id, context=None):
+def consolidate_memory(event_id, context=None):
     event = graph_io.get_node(event_id)
     if not event:
         print(f"[memory_engine] Event {event_id} not found.")
         return None
 
-    # --- VALUE VECTOR EXTRACTION AND EMBEDDING ---
-    vv = None
-    schema_version = None
-    if not event.get("value_vector"):
-        try:
-            vv = value_vector.extract_and_score_value_vector(event.get("raw_text", ""), agent="memory_engine")
-            schema_version = value_vector.get_value_schema_version()
-            value_vector.embed_value_vector(event_id, vv, schema_version)
-        except Exception as e:
-            print(f"[memory_engine] Value vector extraction failed: {e}")
-            vv = {}
-            schema_version = value_vector.get_value_schema_version()
-    else:
-        vv = event.get("value_vector", {})
-        schema_version = event.get("value_schema_version", value_vector.get_value_schema_version())
+    raw_text = event.get("raw_text", "").strip()
+    context_str = event.get("context", "").strip()
 
-    alignment = event.get("agent_alignment", 0.5)  # Placeholder
+    # --- Generate memory_text via reflection ---
+    try:
+        from core.prompts import memory_creation_prompt, get_ecodia_identity
+        from core.llm_tools import run_llm
+
+        identity = get_ecodia_identity()
+        prompt = memory_creation_prompt(identity, context_str, action_plan=None)
+        reflection = run_llm(prompt, agent="claude", purpose="agent")
+        memory_text = reflection.get("memory_text", "").strip()
+    except Exception as e:
+        print(f"[memory_engine] Reflection failed: {e}")
+        memory_text = ""
+
+    # --- Vectors ---
+    vv = event.get("value_vector") or value_vector.extract_and_score_value_vector(raw_text, agent="memory_engine")
+    schema_version = event.get("value_schema_version") or value_vector.get_value_schema_version()
+
+    emotion_vector = _llm_emotion_vector(event)
+    max_emotion = max(emotion_vector.values()) if emotion_vector else 0.5
 
     relevance = _calc_relevance(event, context)
     novelty = _calc_novelty(event, context)
-    emotion_vector = _llm_emotion_vector(event)
-    max_emotion = max(emotion_vector.values()) if emotion_vector else 0.5
+    alignment = event.get("agent_alignment", 0.5)
+
     score = (
         0.45 * relevance +
         0.18 * novelty +
@@ -55,15 +60,12 @@ def evaluate_event(event_id, context=None):
         0.05 * _meta_contextual_weight(event, context)
     )
 
-    # --- Value importance bumping: Bump any values with strong alignment
-    bump_values_from_event_value_vector(vv)
+    # --- Embed full memory vector (raw + context + memory_text) ---
+    from core.embedding import embed_text
+    embed_input = f"{raw_text}\n{context_str}\n{memory_text}"
+    memory_vector = embed_text(embed_input)
 
-    # Dynamic promotion threshold
-    promotion_threshold = event.get("promotion_threshold", MEMORY_PROMOTION_BASE)
-    if "agent_priority" in event:
-        promotion_threshold -= 0.04 * event["agent_priority"]
-
-    # --- AUDIT LOGGING ---
+    # --- Audit log entry ---
     rationale = {
         "score": score,
         "inputs": {
@@ -75,29 +77,26 @@ def evaluate_event(event_id, context=None):
             "value_schema_version": schema_version
         },
         "timestamp": datetime.datetime.utcnow().isoformat(),
-        "promotion_threshold": promotion_threshold,
-        "cause": "evaluate_event"
+        "cause": "consolidate_memory"
     }
+
     audit_log = event.get("audit_log", [])
     if isinstance(audit_log, str):
-        try:
-            audit_log = json.loads(audit_log)
-        except:
-            audit_log = []
+        try: audit_log = json.loads(audit_log)
+        except: audit_log = []
     audit_log.append(rationale)
 
+    # --- Final writeback ---
     graph_io.update_node(None, event_id, {
-        "relevance_score": score,
-        "novelty_score": novelty,
+        "type": "Memory",
+        "memory_text": memory_text,
         "emotion_vector": _serialize(emotion_vector),
         "value_vector": _serialize(vv),
         "value_schema_version": schema_version,
+        "vector": memory_vector,
         "last_evaluated": rationale["timestamp"],
         "audit_log": _serialize(audit_log)
     })
-
-    if score >= promotion_threshold:
-        promote_to_core_memory(event_id, rationale=rationale, emotion_vector=emotion_vector, value_vector=vv, value_schema_version=schema_version)
 
     if EMOTION_TAGGING_ENABLED and emotion_vector:
         tag_emotion(event_id, emotion_vector)

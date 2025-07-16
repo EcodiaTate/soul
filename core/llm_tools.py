@@ -34,7 +34,7 @@ def run_llm(prompt, agent=None, purpose=None, model=None):
     """
     Multi-backend LLM runner.
     - Embedding/context: GPT
-    - Chat/agent/peer: Claude
+    - Chat/agent/peer/prethought: Claude
     - Consensus/CE: Gemini
     """
     backend = (purpose or "").lower()
@@ -44,55 +44,67 @@ def run_llm(prompt, agent=None, purpose=None, model=None):
     if backend in ["embedding", "context", "compress"]:
         print(f"[llm_tools] OpenAI GPT ({OPENAI_EMBED_MODEL}) for context/embedding.")
         openai.api_key = OPENAI_API_KEY
-        # Simulate embedding as not all OpenAI accounts have embeddings endpoint
         return [random.uniform(-1, 1) for _ in range(1536)]
 
-    # Agent mesh/persona/peer review: Claude
-    elif backend in ["agent", "chat", "peer_review", "mesh"]:
-        print(f"[llm_tools] Claude ({ANTHROPIC_MODEL}) for agent/peer review.")
+    # Claude for agent/mesh/chat/prethought
+    elif backend in ["agent", "chat", "peer_review", "mesh", "prethought"]:
+        print(f"[llm_tools] Claude ({ANTHROPIC_MODEL}) for {backend}.")
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=512,
-            temperature=0.0,
-            system=prompt,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = msg.content[0].text if msg.content and msg.content[0].text else ""
         try:
-            response = json.loads(text)
-        except Exception:
-            response = _dev_parse_json_from_anything(text)
-        return response
+            msg = client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=512,
+                temperature=0.0,
+                system=prompt,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            text = msg.content[0].text if msg.content and msg.content[0].text else ""
+            try:
+                response = json.loads(text)
+            except Exception:
+                response = _dev_parse_json_from_anything(text)
+            return response
+        except Exception as e:
+            print(f"[llm_tools] Claude error on {backend}: {e}")
+            return {}
 
-    # Consensus/CE: Gemini
+    # Gemini for synthesis, consensus, consciousness
     elif backend in ["consensus", "ce", "consciousness", "rational_synthesis"]:
         print(f"[llm_tools] Gemini ({GEMINI_MODEL}) for consensus/CE.")
         model = GenerativeModel(GEMINI_MODEL)
-        out = model.generate_content(prompt)
-        text = out.text if hasattr(out, "text") else str(out)
         try:
-            response = json.loads(text)
-        except Exception:
-            response = _dev_parse_json_from_anything(text)
-        return response
+            out = model.generate_content(prompt)
+            text = out.text if hasattr(out, "text") else str(out)
+            try:
+                response = json.loads(text)
+            except Exception:
+                response = _dev_parse_json_from_anything(text)
+            return response
+        except Exception as e:
+            print(f"[llm_tools] Gemini error: {e}")
+            return {}
 
-    # Default fallback: OpenAI GPT
+    # OpenAI fallback/default
     else:
         print(f"[llm_tools] OpenAI GPT ({OPENAI_LLM_MODEL}) for fallback/default.")
         openai.api_key = OPENAI_API_KEY
-        completion = openai.ChatCompletion.create(
-            model=OPENAI_LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=512,
-        )
-        text = completion.choices[0].message.content
         try:
-            response = json.loads(text)
-        except Exception:
-            response = _dev_parse_json_from_anything(text)
-        return response
+            completion = openai.ChatCompletion.create(
+                model=OPENAI_LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=512,
+            )
+            text = completion.choices[0].message.content
+            try:
+                response = json.loads(text)
+            except Exception:
+                response = _dev_parse_json_from_anything(text)
+            return response
+        except Exception as e:
+            print(f"[llm_tools] OpenAI error: {e}")
+            return {}
+
 
 def _dev_parse_json_from_anything(text):
     """

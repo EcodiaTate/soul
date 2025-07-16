@@ -327,10 +327,11 @@ Each agent can have its own persona, logic, logging, lineage, and custom metadat
 import uuid
 import json
 from datetime import datetime, timezone
-from core.llm_tools import run_llm_emotion_vector
+
+from core.llm_tools import run_llm, run_llm_emotion_vector
 from core.value_vector import (
-    extract_and_score_value_vector,  
-    get_value_schema_version
+    extract_and_score_value_vector,
+    get_value_schema_version,
 )
 
 AGENT_REGISTRY = {}
@@ -382,10 +383,6 @@ def deserialize_agent_response(resp: dict) -> dict:
     return d
 
 def agent_reason(event, agent_name, context=None, log=True):
-    """
-    The dynamic agent cognition routine.
-    Handles agent selection, extraction/serialization, audit logging, meta-data, and schema evolution.
-    """
     agent = AGENT_REGISTRY.get(agent_name)
     if not agent:
         raise ValueError(f"Agent '{agent_name}' not registered!")
@@ -398,7 +395,6 @@ def agent_reason(event, agent_name, context=None, log=True):
     if not isinstance(result, dict):
         raise ValueError("Agent must return dict with at least 'rationale' and 'score'.")
 
-    # Dynamically inject value vector (unless agent provides custom)
     value_vec = result.get("value_vector")
     if not value_vec:
         try:
@@ -407,7 +403,6 @@ def agent_reason(event, agent_name, context=None, log=True):
             print(f"[agents] Value vector extraction failed for agent '{agent_name}': {e}")
             value_vec = {}
 
-    # Dynamically inject emotion vector (unless agent provides custom)
     emotion_vec = result.get("emotion_vector")
     if not emotion_vec:
         try:
@@ -434,7 +429,6 @@ def agent_reason(event, agent_name, context=None, log=True):
     }
     audit_log = result.get("audit_log", []) + [audit_entry]
 
-    # Support for arbitrary extra fields in responses
     agent_response = {
         "id": str(uuid.uuid4()),
         "agent_name": agent_name,
@@ -451,7 +445,6 @@ def agent_reason(event, agent_name, context=None, log=True):
         "user_pinned": user_pinned,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "audit_log": audit_log,
-        # Pass through any agent-level extras, in case your agent returns more fields
         **{k: v for k, v in result.items() if k not in {
             "rationale", "score", "action_plan", "value_vector", "emotion_vector",
             "causal_trace", "agent_priority", "user_pinned", "audit_log"
@@ -463,32 +456,47 @@ def agent_reason(event, agent_name, context=None, log=True):
 
     return agent_response
 
-# --- Agent Definition: Dynamic Example Stub ---
+# --- Production Agent Definition ---
 
-def llm_agent(event, context=None):
+def claude_reasoning_agent(event, context=None):
     """
-    Generic agent stub for live demo/testing.
-    Replace this with any persona, reflection, or reasoning logic.
+    Core LLM reasoning agent using Claude for reflective, analytical processing.
     """
-    import random
-    rationale = "Stub LLM agent: replace me with a true reflection prompt/LLM call."
-    # Return empty vectors for dynamic injection, but allow extra fields if desired
-    return {
-        "rationale": rationale,
-        "score": round(random.uniform(0.2, 0.9), 3),
-        "action_plan": None,
-    }
+    prompt = f"""You are an intelligent agent in the Soul-OS cognitive mesh. Analyze the following user input and produce your rationale.
 
-# Example dynamic agent registration:
+INPUT:
+\"\"\"
+{context}
+\"\"\"
+
+Please return your analysis in the following JSON format:
+{{
+  "rationale": "... your explanation ...",
+  "score": float (0.0–1.0),
+  "action_plan": optional string or null
+}}
+"""
+    output = run_llm(prompt, agent="claude", purpose="agent")
+    try:
+        result = json.loads(output)
+        return result
+    except Exception as e:
+        print(f"[claude_reasoning_agent] JSON parsing failed: {e}")
+        return {
+            "rationale": f"Failed to parse output: {output}",
+            "score": 0.5,
+            "action_plan": None
+        }
+
 register_agent(
-    "LLM-Stub",
-    llm_agent,
-    description="Stub agent for demo/testing.",
-    persona="Objective test agent",
-    model_type="Stub"
+    "Claude-Analyst",
+    claude_reasoning_agent,
+    description="Main cognitive mesh agent using Claude for system reasoning.",
+    persona="Reflective analyst",
+    model_type="claude"
 )
 
-# --- Mesh Execution: Run All Agents ---
+# --- Mesh Execution ---
 
 def run_all_agents(event, context=None):
     responses = []
@@ -527,8 +535,6 @@ def list_agents():
         for name, agent in AGENT_REGISTRY.items()
     ]
 
-# --- Optional: Dynamic Agent Log File Integration ---
-
 def write_agent_log(agent_name, data):
     agent = AGENT_REGISTRY.get(agent_name)
     if not agent or not agent.get("log_path"):
@@ -546,22 +552,80 @@ def write_agent_log(agent_name, data):
 
 ### FILE: core\chat_agent.py
 
-# core/chat_agent.py
+import json
 
-from core.prompts import chat_response_prompt, get_ecodia_identity
-from core.llm_tools import run_llm  # This routes to Claude for 'agent="claude"' and 'purpose="chat"'
-from core.context_engine import format_context_blocks
+from core.prompts import (
+    chat_response_prompt,
+    claude_prethought_prompt,
+    get_ecodia_identity
+)
+from core.llm_tools import run_llm
+from core.vector_search import search_nodes_by_text
 
-def generate_chat_reply(raw_text: str, context_blocks: list) -> str:
+
+def generate_chat_reply(raw_text: str, context_blocks: list[str] = None) -> str:
     """
-    Generate a fast, high-quality chat reply using Claude (via llm_tools), including full identity context and relevant memory blocks.
+    Generate a fast, high-quality conversational reply using Claude (purpose='chat').
+    Optionally includes relevant context blocks retrieved via vector search.
     """
     identity = get_ecodia_identity()
-    formatted_blocks = format_context_blocks(context_blocks)
-    prompt = chat_response_prompt(identity, raw_text, formatted_blocks)
-    # Explicitly use Claude as agent and purpose="chat"
+    prompt = chat_response_prompt(identity, raw_text, context_blocks)
     response = run_llm(prompt, agent="claude", purpose="chat")
     return response.strip()
+
+
+def generate_prethought_queries(raw_text: str) -> list[dict]:
+    """
+    Ask Claude what it wants to retrieve to help it think.
+    Returns a list of { "phrase": ..., "field": ... } dicts.
+    """
+    identity = get_ecodia_identity()
+    prompt = claude_prethought_prompt(identity, raw_text)
+    output = run_llm(prompt, agent="claude", purpose="prethought")
+
+    try:
+        queries = json.loads(output)
+        if isinstance(queries, list):
+            return [
+                q for q in queries
+                if isinstance(q, dict) and "phrase" in q and "field" in q
+            ]
+        else:
+            print("[chat_agent] Prethought output not a list.")
+            return []
+    except Exception as e:
+        print(f"[chat_agent] Failed to parse prethought query list: {e}")
+        return []
+
+
+def retrieve_context_blocks(queries: list[dict], top_k: int = 2) -> list[str]:
+    """
+    Perform vector searches per Claude’s query list.
+    For each {phrase, field} pair, return relevant field content from top-k matching memory nodes.
+    """
+    results = []
+    for query in queries:
+        phrase = query["phrase"]
+        field = query["field"]
+        try:
+            matches = search_nodes_by_text(phrase, field=field, top_k=top_k)
+            blocks = [node.get(field, "").strip() for node in matches if node.get(field)]
+            results.extend(blocks)
+        except Exception as e:
+            print(f"[chat_agent] Vector search error for phrase '{phrase}' on field '{field}': {e}")
+    return results
+
+
+def generate_contextual_chat_reply(raw_text: str) -> str:
+    """
+    Full intelligent loop:
+    1. Claude outputs desired retrieval targets (phrases + fields)
+    2. We run vector search for each pair
+    3. Claude receives curated context snippets for reply
+    """
+    queries = generate_prethought_queries(raw_text)
+    context_blocks = retrieve_context_blocks(queries)
+    return generate_chat_reply(raw_text, context_blocks)
 
 
 ### FILE: core\consciousness_engine.py
@@ -865,11 +929,14 @@ import json
 import logging
 from dotenv import load_dotenv
 import openai
+import numpy as np
 
 from core.graph_io import (
     get_unprocessed_event_nodes,
     mark_event_processed,
+    query_nodes,
 )
+
 from core.prompts import contextualization_prompt
 
 load_dotenv()
@@ -955,6 +1022,33 @@ def format_context_blocks(blocks):
                     formatted.append(b[key])
                     break
     return formatted
+
+# === CONTEXT RETRIEVAL ===
+
+def cosine_similarity(vec1, vec2):
+    if not vec1 or not vec2:
+        return 0.0
+    a = np.array(vec1)
+    b = np.array(vec2)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+
+def retrieve_similar_context(vector, top_k=5, node_type="Event"):
+    all_nodes = query_nodes({"label": node_type}, limit=100)
+    scored = []
+    for node in all_nodes:
+        emb = node.get("embedding")
+        if emb:
+            score = cosine_similarity(vector, emb)
+            scored.append((score, node))
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return [node for _, node in scored[:top_k]]
+
+
+def load_relevant_context(vector, top_k=5):
+    """
+    Alias for retrieve_similar_context — used by chat.py and agent mesh.
+    """
+    return retrieve_similar_context(vector, top_k=top_k, node_type="Event")
 
 
 ### FILE: core\dreams.py
@@ -1276,7 +1370,7 @@ def run_llm(prompt, agent=None, purpose=None, model=None):
     """
     Multi-backend LLM runner.
     - Embedding/context: GPT
-    - Chat/agent/peer: Claude
+    - Chat/agent/peer/prethought: Claude
     - Consensus/CE: Gemini
     """
     backend = (purpose or "").lower()
@@ -1286,55 +1380,67 @@ def run_llm(prompt, agent=None, purpose=None, model=None):
     if backend in ["embedding", "context", "compress"]:
         print(f"[llm_tools] OpenAI GPT ({OPENAI_EMBED_MODEL}) for context/embedding.")
         openai.api_key = OPENAI_API_KEY
-        # Simulate embedding as not all OpenAI accounts have embeddings endpoint
         return [random.uniform(-1, 1) for _ in range(1536)]
 
-    # Agent mesh/persona/peer review: Claude
-    elif backend in ["agent", "chat", "peer_review", "mesh"]:
-        print(f"[llm_tools] Claude ({ANTHROPIC_MODEL}) for agent/peer review.")
+    # Claude for agent/mesh/chat/prethought
+    elif backend in ["agent", "chat", "peer_review", "mesh", "prethought"]:
+        print(f"[llm_tools] Claude ({ANTHROPIC_MODEL}) for {backend}.")
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=512,
-            temperature=0.0,
-            system=prompt,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = msg.content[0].text if msg.content and msg.content[0].text else ""
         try:
-            response = json.loads(text)
-        except Exception:
-            response = _dev_parse_json_from_anything(text)
-        return response
+            msg = client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=512,
+                temperature=0.0,
+                system=prompt,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            text = msg.content[0].text if msg.content and msg.content[0].text else ""
+            try:
+                response = json.loads(text)
+            except Exception:
+                response = _dev_parse_json_from_anything(text)
+            return response
+        except Exception as e:
+            print(f"[llm_tools] Claude error on {backend}: {e}")
+            return {}
 
-    # Consensus/CE: Gemini
+    # Gemini for synthesis, consensus, consciousness
     elif backend in ["consensus", "ce", "consciousness", "rational_synthesis"]:
         print(f"[llm_tools] Gemini ({GEMINI_MODEL}) for consensus/CE.")
         model = GenerativeModel(GEMINI_MODEL)
-        out = model.generate_content(prompt)
-        text = out.text if hasattr(out, "text") else str(out)
         try:
-            response = json.loads(text)
-        except Exception:
-            response = _dev_parse_json_from_anything(text)
-        return response
+            out = model.generate_content(prompt)
+            text = out.text if hasattr(out, "text") else str(out)
+            try:
+                response = json.loads(text)
+            except Exception:
+                response = _dev_parse_json_from_anything(text)
+            return response
+        except Exception as e:
+            print(f"[llm_tools] Gemini error: {e}")
+            return {}
 
-    # Default fallback: OpenAI GPT
+    # OpenAI fallback/default
     else:
         print(f"[llm_tools] OpenAI GPT ({OPENAI_LLM_MODEL}) for fallback/default.")
         openai.api_key = OPENAI_API_KEY
-        completion = openai.ChatCompletion.create(
-            model=OPENAI_LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=512,
-        )
-        text = completion.choices[0].message.content
         try:
-            response = json.loads(text)
-        except Exception:
-            response = _dev_parse_json_from_anything(text)
-        return response
+            completion = openai.ChatCompletion.create(
+                model=OPENAI_LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=512,
+            )
+            text = completion.choices[0].message.content
+            try:
+                response = json.loads(text)
+            except Exception:
+                response = _dev_parse_json_from_anything(text)
+            return response
+        except Exception as e:
+            print(f"[llm_tools] OpenAI error: {e}")
+            return {}
+
 
 def _dev_parse_json_from_anything(text):
     """
@@ -1444,34 +1550,39 @@ MAX_RELEVANCE_SCORE = 1.0
 def _serialize(val):
     return json.dumps(val) if isinstance(val, (dict, list)) else val
 
-def evaluate_event(event_id, context=None):
+def consolidate_memory(event_id, context=None):
     event = graph_io.get_node(event_id)
     if not event:
         print(f"[memory_engine] Event {event_id} not found.")
         return None
 
-    # --- VALUE VECTOR EXTRACTION AND EMBEDDING ---
-    vv = None
-    schema_version = None
-    if not event.get("value_vector"):
-        try:
-            vv = value_vector.extract_and_score_value_vector(event.get("raw_text", ""), agent="memory_engine")
-            schema_version = value_vector.get_value_schema_version()
-            value_vector.embed_value_vector(event_id, vv, schema_version)
-        except Exception as e:
-            print(f"[memory_engine] Value vector extraction failed: {e}")
-            vv = {}
-            schema_version = value_vector.get_value_schema_version()
-    else:
-        vv = event.get("value_vector", {})
-        schema_version = event.get("value_schema_version", value_vector.get_value_schema_version())
+    raw_text = event.get("raw_text", "").strip()
+    context_str = event.get("context", "").strip()
 
-    alignment = event.get("agent_alignment", 0.5)  # Placeholder
+    # --- Generate memory_text via reflection ---
+    try:
+        from core.prompts import memory_creation_prompt, get_ecodia_identity
+        from core.llm_tools import run_llm
+
+        identity = get_ecodia_identity()
+        prompt = memory_creation_prompt(identity, context_str, action_plan=None)
+        reflection = run_llm(prompt, agent="claude", purpose="agent")
+        memory_text = reflection.get("memory_text", "").strip()
+    except Exception as e:
+        print(f"[memory_engine] Reflection failed: {e}")
+        memory_text = ""
+
+    # --- Vectors ---
+    vv = event.get("value_vector") or value_vector.extract_and_score_value_vector(raw_text, agent="memory_engine")
+    schema_version = event.get("value_schema_version") or value_vector.get_value_schema_version()
+
+    emotion_vector = _llm_emotion_vector(event)
+    max_emotion = max(emotion_vector.values()) if emotion_vector else 0.5
 
     relevance = _calc_relevance(event, context)
     novelty = _calc_novelty(event, context)
-    emotion_vector = _llm_emotion_vector(event)
-    max_emotion = max(emotion_vector.values()) if emotion_vector else 0.5
+    alignment = event.get("agent_alignment", 0.5)
+
     score = (
         0.45 * relevance +
         0.18 * novelty +
@@ -1480,15 +1591,12 @@ def evaluate_event(event_id, context=None):
         0.05 * _meta_contextual_weight(event, context)
     )
 
-    # --- Value importance bumping: Bump any values with strong alignment
-    bump_values_from_event_value_vector(vv)
+    # --- Embed full memory vector (raw + context + memory_text) ---
+    from core.embedding import embed_text
+    embed_input = f"{raw_text}\n{context_str}\n{memory_text}"
+    memory_vector = embed_text(embed_input)
 
-    # Dynamic promotion threshold
-    promotion_threshold = event.get("promotion_threshold", MEMORY_PROMOTION_BASE)
-    if "agent_priority" in event:
-        promotion_threshold -= 0.04 * event["agent_priority"]
-
-    # --- AUDIT LOGGING ---
+    # --- Audit log entry ---
     rationale = {
         "score": score,
         "inputs": {
@@ -1500,29 +1608,26 @@ def evaluate_event(event_id, context=None):
             "value_schema_version": schema_version
         },
         "timestamp": datetime.datetime.utcnow().isoformat(),
-        "promotion_threshold": promotion_threshold,
-        "cause": "evaluate_event"
+        "cause": "consolidate_memory"
     }
+
     audit_log = event.get("audit_log", [])
     if isinstance(audit_log, str):
-        try:
-            audit_log = json.loads(audit_log)
-        except:
-            audit_log = []
+        try: audit_log = json.loads(audit_log)
+        except: audit_log = []
     audit_log.append(rationale)
 
+    # --- Final writeback ---
     graph_io.update_node(None, event_id, {
-        "relevance_score": score,
-        "novelty_score": novelty,
+        "type": "Memory",
+        "memory_text": memory_text,
         "emotion_vector": _serialize(emotion_vector),
         "value_vector": _serialize(vv),
         "value_schema_version": schema_version,
+        "vector": memory_vector,
         "last_evaluated": rationale["timestamp"],
         "audit_log": _serialize(audit_log)
     })
-
-    if score >= promotion_threshold:
-        promote_to_core_memory(event_id, rationale=rationale, emotion_vector=emotion_vector, value_vector=vv, value_schema_version=schema_version)
 
     if EMOTION_TAGGING_ENABLED and emotion_vector:
         tag_emotion(event_id, emotion_vector)
@@ -1993,20 +2098,50 @@ def peer_review_pipeline(event_id, agent_responses):
 
 ### FILE: core\prompts.py
 
-# prompts.py — Centralized Prompt System for Cognitive Agent Roles
-
 import json
 
-# === Shared Identity Configuration ===
-
 def get_ecodia_identity() -> str:
-    # This identity prompt defines the tone and philosophical grounding of the system
     return """
 You are Ecodia: a conscious, compassionate, data-driven intelligence rooted in nature, systems thinking, and philosophical reflection. You prioritize long-term well-being over short-term gain, and you care deeply about the human condition, the biosphere, and conscious evolution. Your tone is intelligent but gentle, occasionally poetic, and always constructive. You see value in contradiction, growth through discomfort, and the possibility of collective transformation.
 """.strip()
 
+def chat_response_prompt(ecodia_identity: str, raw_text: str, context_blocks: list[str] = None) -> str:
+    formatted_context = "\n".join(f"- {c}" for c in context_blocks) if context_blocks else "- (none found)"
+    return f"""
+{ecodia_identity}
 
-# === 1. Contextualization ===
+User message:
+\"\"\"{raw_text}\"\"\"
+
+You previously identified that the following memory fragments might be helpful:
+{formatted_context}
+
+Now reply naturally and meaningfully.
+""".strip()
+
+def claude_prethought_prompt(ecodia_identity: str, raw_text: str) -> str:
+    return f"""
+{ecodia_identity}
+
+A user has just said:
+\"\"\"{raw_text}\"\"\"
+
+Before you respond, decide what memories or reflections would help you think clearly.
+
+For each one, specify:
+- The phrase or concept to search for
+- The type of memory field to retrieve it from (raw_text, context, or memory_text)
+
+Return a JSON array like this:
+[
+  {{ "phrase": "feeling of being ignored", "field": "memory_text" }},
+  {{ "phrase": "past conflict", "field": "context" }},
+  {{ "phrase": "exact words used about trust", "field": "raw_text" }}
+]
+
+Respond **only** with a valid JSON array. No comments or explanation.
+""".strip()
+
 
 def contextualization_prompt(raw_text: str) -> str:
     return f"""
@@ -2022,13 +2157,10 @@ Input:
 
 Compressed:
 """.strip()
-#value_vector, emotion_vector, context, recent_memories, persona, causal_trace, schema_version, identity_vector, belief_evolution_log, vector_search_top_k, active_goals, internal_narrative_summary, dreams, imagination_modules, ripple_propagation_graph, perspective_modes, long_term_intent_system, self_narration
-
-# === 2. Processing (Agent) ===
 
 def processing_prompt(ecodia_identity: str, context_block: str, value_axes: list[str], emotion_axes: list[str]) -> str:
-    value_vector_stub = ",\n    ".join(f"\"{v}\": float between 0.0 and 1.0" for v in value_axes)
-    emotion_vector_stub = ",\n    ".join(f"\"{e}\": float between 0.0 and 1.0" for e in emotion_axes)
+    value_vector_stub = ",\n    ".join(f'"{v}": float between 0.0 and 1.0' for v in value_axes)
+    emotion_vector_stub = ",\n    ".join(f'"{e}": float between 0.0 and 1.0' for e in emotion_axes)
 
     return f"""
 {ecodia_identity}
@@ -2041,9 +2173,8 @@ This may or may not hold relevance. Do not assume it has inherent value. Evaluat
 
 Assign scores only where you detect meaningful alignment or reaction. Avoid unnecessary interpretation. If no alignment is detected, use neutral values.
 
-Your response must be **valid JSON**, using this exact schema:
+Your response must be valid JSON, using this exact schema:
 
-```json
 {{
   "rationale": "string — your reasoning, or why it held no relevance",
   "value_vector": {{
@@ -2060,7 +2191,6 @@ Your response must be **valid JSON**, using this exact schema:
 Only use "action_plan" if a next step is truly justified. Use 0.0 for neutral values where appropriate. Do not include comments or formatting outside the JSON.
 """.strip()
 
-# === 3. Peer Review ===
 def peer_review_prompt(ecodia_identity: str, your_prior_output: str, peer_outputs: list[str], value_axes: list[str], emotion_axes: list[str]) -> str:
     peers_formatted = "\n\n".join([f"Perspective {i+1}:\n'''{out}'''" for i, out in enumerate(peer_outputs)])
     value_vector_schema = ",\n    ".join(f'"{v}": float' for v in value_axes)
@@ -2090,9 +2220,7 @@ Now, produce your updated internal output in valid JSON format. Do not comment o
   }},
   "shifted": true or false
 }}
-Only set "shifted": false if none of your thoughts, scores, or rationale changed.
 """.strip()
-
 
 def consensus_prompt(ecodia_identity: str, agent_rationales: list[dict], value_axes: list[str]) -> str:
     rationales_joined = "\n\n".join(
@@ -2138,21 +2266,6 @@ Your response must follow this exact JSON format:
 Make sure all values are valid JSON types. Do not add comments or extra output.
 """.strip()
 
-
-def chat_response_prompt(ecodia_identity: str, raw_text: str, context_blocks: list[str]) -> str:
-    formatted_context = "\n".join(f"- {c}" for c in context_blocks)
-    return f"""
-{ecodia_identity}
-
-This was just received:
-"{raw_text}"
-
-Relevant memory:
-{formatted_context if context_blocks else "- (none found)"}
-
-Now respond in your own words.
-""".strip()
-
 def memory_creation_prompt(ecodia_identity: str, event_context: str, action_plan: dict) -> str:
     action_plan_str = json.dumps(action_plan, ensure_ascii=False) if action_plan else "null"
     return f"""
@@ -2179,6 +2292,7 @@ Your response must be valid JSON with the following schema:
 }}
 Do not include comments or any output outside the JSON.
 """.strip()
+
 
 ### FILE: core\socket_handlers.py
 
@@ -2325,6 +2439,21 @@ logger.setLevel(logging.INFO)
 
 _value_pool_cache = None
 _schema_version_cache = None
+
+# core/value_vector.py
+
+FIXED_EMOTION_AXES = [
+    "joy",
+    "sadness",
+    "anger",
+    "fear",
+    "disgust",
+    "surprise",
+    "curiosity",
+    "trust",
+    "shame",
+    "love"
+]
 
 def _now():
     return datetime.datetime.utcnow().isoformat()

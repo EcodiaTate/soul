@@ -3,8 +3,7 @@ from flask import Blueprint, request, jsonify
 from core.memory_engine import store_event
 from core.agent_manager import assign_task
 from core.logging_engine import log_action
-from core.auth import verify_token
-# Do NOT import flask_socketio.emit in this REST route file
+# from core.auth import verify_token  # ⛔️ TEMP DISABLED FOR LOCAL TESTING
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -14,10 +13,12 @@ def chat_with_soul():
     Accept a user message, create event, route to LLM, return response.
     For REST: do NOT emit via socket here! Just return JSON.
     """
-    token = request.headers.get('Authorization', '').replace('Bearer ', '')
-    user = verify_token(token)
-    if 'error' in user:
-        return jsonify({"error": "Unauthorized"}), 401
+    # TEMP AUTH BYPASS:
+    # token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    # user = verify_token(token)
+    # if 'error' in user:
+    #     return jsonify({"error": "Unauthorized"}), 401
+    user = {"username": "test_user"}
 
     data = request.get_json()
     user_message = data.get("message")
@@ -44,10 +45,12 @@ def get_chat_history():
     """
     Return chronological list of recent chat messages/events, normalized.
     """
-    token = request.headers.get('Authorization', '').replace('Bearer ', '')
-    user = verify_token(token)
-    if 'error' in user:
-        return jsonify({"error": "Unauthorized"}), 401
+    # TEMP AUTH BYPASS:
+    # token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    # user = verify_token(token)
+    # if 'error' in user:
+    #     return jsonify({"error": "Unauthorized"}), 401
+    user = {"username": "test_user"}
 
     from core.graph_io import run_read_query
     results = run_read_query("MATCH (e:Event) RETURN e ORDER BY e.timestamp DESC LIMIT 50")
@@ -65,7 +68,3 @@ def get_chat_history():
     log_action("routes/chat", "history", f"Returned chat history to {user.get('username')}")
 
     return jsonify({"history": messages})
-
-# Note:
-# - If you want live chat feedback, add SocketIO event handlers in a *socket_handlers.py* module,
-#   import/attach them to your app in app.py. This REST route should not emit.

@@ -74,7 +74,7 @@ def assign_task(agent_id: str, task: str, context: dict) -> dict:
         log_action("agent_manager", "assign_task", f"Prompt to {agent_id}: {prompt}")
 
         # FIX HERE: use correct method for your model!
-        result = model.generate(prompt)  # <<< UPDATE THIS LINE TO MATCH YOUR MODEL
+        result = model(prompt)  # <<< UPDATE THIS LINE TO MATCH YOUR MODEL
 
         return {
             "agent": agent_id,

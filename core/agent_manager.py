@@ -18,11 +18,13 @@ AGENT_REGISTRY = {
   "gpt_writer": {
     "role": "synthesis",
     "description": "Fuses responses from debates or reflections into narrative",
+    "status": "active",
     "model": GPTWrapper(),     # <- expects a class
   },
   "gemini_critic": {
     "role": "critic",
     "description": "Critiques reasoning from a factual basis",
+    "status": "active",
     "model": GeminiWrapper(),  # <- expects a class
   }
 }

@@ -1,27 +1,32 @@
 # core/agent_manager.py — Agent Orchestration Core
 from core.utils import generate_uuid, timestamp_now
 from core.logging_engine import log_action
-from core.memory_query import get_context_for_agent
 from models.claude import ClaudeWrapper
 from models.gpt import GPTWrapper
+from models.gemini import GeminiWrapper
+from core.graph_io import run_read_query
+
 
 # --- Global Agent Registry ---
 AGENT_REGISTRY = {
-    "claude_reflector": {
-        "id": "agent_claude",
-        "role": "reflector",
-        "description": "Identifies contradictions and adds meta-questions",
-        "status": "active",
-        "model": ClaudeWrapper(),
-    },
-    "gpt_writer": {
-        "id": "agent_gpt",
-        "role": "synthesis",
-        "description": "Fuses responses from debates or reflections into narrative",
-        "status": "active",
-        "model": GPTWrapper(),
-    }
+  "claude_reflector": {
+    "role": "reflector",
+    "description": "Identifies contradictions and adds meta-questions",
+    "status": "active",
+    "model": ClaudeWrapper(),   # <- expects a class
+  },
+  "gpt_writer": {
+    "role": "synthesis",
+    "description": "Fuses responses from debates or reflections into narrative",
+    "model": GPTWrapper(),     # <- expects a class
+  },
+  "gemini_critic": {
+    "role": "critic",
+    "description": "Critiques reasoning from a factual basis",
+    "model": GeminiWrapper(),  # <- expects a class
+  }
 }
+    # Add more agents as needed
 
 # --- Core Functions ---
 def register_agent(agent_id: str, agent_type: str, description: str, model_interface: object) -> None:
@@ -93,3 +98,15 @@ def spawn_role_based_agent(role: str) -> str:
     model = ClaudeWrapper() if "reflect" in role else GPTWrapper()
     register_agent(new_id, role, description, model)
     return new_id
+
+def get_context_for_agent(agent_id: str, limit: int = 20) -> dict:
+    query = """
+    MATCH (e:Event)
+    WHERE e.agent_origin = $agent_id
+    RETURN e
+    ORDER BY e.timestamp DESC
+    LIMIT $limit
+    """
+    result = run_read_query(query, {"agent_id": agent_id, "limit": limit})
+    context = {"recent_events": [r['e'] for r in result]}
+    return context

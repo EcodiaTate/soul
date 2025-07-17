@@ -1,89 +1,94 @@
-# routes/chat.py — Real-time Chat API (Production Ready, No SocketIO Emit)
-from flask import Blueprint, request, jsonify
-from core.memory_engine import store_event
+# app.py — SoulOS Entry Point (Production Ready with Gevent)
+
+import os
+from flask import Flask
+from flask_cors import CORS
+from flask_socketio import SocketIO
+from flask_jwt_extended import JWTManager
+
+from config.settings import load_config
+from routes import register_blueprints
+from core.logging_engine import init_logging
 from core.agent_manager import assign_task
-from core.logging_engine import log_action
-from core.auth import verify_token  # enable when auth ready
-import traceback
+from core.memory_engine import store_event
+from core.auth import verify_token
 
-chat_bp = Blueprint('chat', __name__)
+# --- SocketIO (Gevent for production) ---
+socketio = SocketIO(cors_allowed_origins="*", async_mode="gevent")
 
-@chat_bp.route('/chat', methods=['POST'])
-def chat_with_soul():
+def create_app():
     """
-    Accept a user message, create event, route to LLM, return response.
-    For REST: do NOT emit via socket here! Just return JSON.
+    Create and configure the SoulOS Flask application.
     """
-    try:
-        # TEMP AUTH BYPASS (replace with verify_token(token) when auth is live)
-        user = {"username": "test_user"}
+    app = Flask(__name__)
 
-        data = request.get_json(silent=True)
-        if not data or "message" not in data:
-            log_action("routes/chat", "error", "Missing or malformed JSON in /chat POST")
-            return jsonify({"error": "Malformed or missing JSON body"}), 400
+    # Load environment-based settings
+    config = load_config()
+    app.config.update(config)
 
-        user_message = data["message"]
+    # Enable CORS
+    CORS(app)
 
-        # Store event in memory engine (Neo4j)
-        event = store_event(user_message, agent_origin=user["username"])
-        if not event or not event.get("id"):
-            log_action("routes/chat", "error", "Failed to store event")
-            return jsonify({"error": "Failed to store event"}), 500
+    # JWT auth setup
+    JWTManager(app)
 
-        # Assign task to AI agent (e.g., claude_reflector)
-        response = assign_task("claude_reflector", user_message, context={})
-        final_reply = response.get("response") or response.get("error", "[No response generated]")
+    # Register routes
+    register_blueprints(app)
 
-        log_action("routes/chat", "message", f"User {user['username']} sent message")
+    # Logging
+    init_logging(app)
 
-        return jsonify({
-            "event": event,
-            "response": final_reply
-        })
+    # Bind SocketIO to app
+    socketio.init_app(app)
 
-    except Exception as e:
-        log_action("routes/chat", "exception", str(e))
-        traceback.print_exc()
-        return jsonify({
-            "error": "Internal Server Error",
-            "detail": str(e)
-        }), 500
+    return app
 
-@chat_bp.route('/chat/history', methods=['GET'])
-def get_chat_history():
+# --- SocketIO: Live Chat Events (optional) ---
+@socketio.on('chat_message', namespace='/chat')
+def handle_chat_message(data):
     """
-    Return chronological list of recent chat messages/events, normalized.
+    Handles live SocketIO chat input: { token, message }
     """
-    try:
-        user = {"username": "test_user"}  # TEMP AUTH BYPASS
+    token = data.get('token')
+    user = verify_token(token)
+    if not token or 'error' in user:
+        socketio.emit('chat_response', {"error": "Unauthorized"}, namespace='/chat')
+        return
 
-        from core.graph_io import run_read_query
-        results = run_read_query("""
-            MATCH (e:Event)
-            RETURN e
-            ORDER BY e.timestamp DESC
-            LIMIT 50
-        """)
+    message = data.get('message')
+    if not message:
+        socketio.emit('chat_response', {"error": "No message provided"}, namespace='/chat')
+        return
 
-        messages = [
-            {
-                "text": r["e"].get("raw_text", ""),
-                "timestamp": r["e"].get("timestamp", ""),
-                "agent_origin": r["e"].get("agent_origin"),
-                "event_id": r["e"].get("id"),
-                "status": r["e"].get("status")
-            }
-            for r in results if isinstance(r, dict) and "e" in r
-        ]
+    event = store_event(message, agent_origin=user["username"])
+    if not event:
+        socketio.emit('chat_response', {"error": "Failed to store event"}, namespace='/chat')
+        return
 
-        log_action("routes/chat", "history", f"Returned chat history to {user['username']}")
-        return jsonify({"history": messages})
+    response = assign_task("claude_reflector", message, context={})
+    socketio.emit('chat_response', {
+        "response": response.get("response", ""),
+        "event": event,
+        "agent": "claude_reflector"
+    }, namespace='/chat')
 
-    except Exception as e:
-        log_action("routes/chat", "exception", str(e))
-        traceback.print_exc()
-        return jsonify({
-            "error": "Internal Server Error",
-            "detail": str(e)
-        }), 500
+@socketio.on('join', namespace='/chat')
+def on_join(data):
+    room = data.get('room')
+    if room:
+        from flask_socketio import join_room
+        join_room(room)
+        socketio.emit('system', {"msg": f"Joined {room}"}, room=room, namespace='/chat')
+
+@socketio.on('leave', namespace='/chat')
+def on_leave(data):
+    room = data.get('room')
+    if room:
+        from flask_socketio import leave_room
+        leave_room(room)
+        socketio.emit('system', {"msg": f"Left {room}"}, room=room, namespace='/chat')
+
+# --- Run Mode ---
+if __name__ == '__main__':
+    app = create_app()
+    socketio.run(app, host='0.0.0.0', port=5000)

@@ -1,6 +1,6 @@
 # routes/chat.py — Real-time Chat API (Event Normalization, No SocketIO Emit in REST)
 from flask import Blueprint, request, jsonify
-from core.memory_engine import store_event
+#from core.memory_engine import store_event
 from core.agent_manager import assign_task
 from core.logging_engine import log_action
 # from core.auth import verify_token  # ⛔️ TEMP DISABLED FOR LOCAL TESTING
@@ -9,6 +9,15 @@ import traceback
 chat_bp = Blueprint('chat', __name__)
 
 @chat_bp.route('/chat', methods=['POST'])
+# TEMP MOCK FOR DEPLOY TEST
+def store_event(text, agent_origin=None, metadata=None):
+    return {
+        "id": "event_dummy",
+        "raw_text": text,
+        "agent_origin": agent_origin,
+        "timestamp": "2025-07-17T00:00:00Z",
+        "status": "active"
+    }
 def chat_with_soul():
     """
     Accept a user message, create event, route to LLM, return response.

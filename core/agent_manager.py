@@ -51,23 +51,18 @@ def assign_task(agent_id: str, task: str, context: dict) -> dict:
 
     prompt = None
     try:
-        # Defensive: check agent exists
         if agent_id not in AGENT_REGISTRY:
             error_msg = f"Agent '{agent_id}' not found in registry."
             log_action("agent_manager", "assign_task_error", error_msg)
             return {"agent": agent_id, "error": error_msg}
 
         agent = AGENT_REGISTRY[agent_id]
-
-        # Defensive: check agent model
         if "model" not in agent or agent["model"] is None:
             error_msg = f"Agent '{agent_id}' missing 'model' in registry."
             log_action("agent_manager", "assign_task_error", error_msg)
             return {"agent": agent_id, "error": error_msg}
 
         model = agent["model"]
-
-        # Defensive: check prompt exists in context
         event = context.get("event")
         if not event or "raw_text" not in event:
             error_msg = f"Context missing 'event' or 'raw_text' for agent '{agent_id}'."
@@ -78,16 +73,21 @@ def assign_task(agent_id: str, task: str, context: dict) -> dict:
 
         log_action("agent_manager", "assign_task", f"Prompt to {agent_id}: {prompt}")
 
-        # Main: Run agent/model
-        # Replace model.run() with correct model interface call if needed
-        result = model.run(prompt)
+        # FIX HERE: use correct method for your model!
+        result = model.generate(prompt)  # <<< UPDATE THIS LINE TO MATCH YOUR MODEL
 
         return {
             "agent": agent_id,
             "response": result
         }
     except Exception as e:
-        traceback.print_e_
+        traceback.print_exc()
+        log_action("agent_manager", "assign_task_exception", f"{type(e).__name__}: {str(e)} | Prompt: {prompt}")
+        return {
+            "agent": agent_id,
+            "error": str(e)
+        }
+
 
 
 def get_context_for_agent(agent_id: str, limit: int = 20) -> dict:

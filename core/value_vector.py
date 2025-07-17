@@ -1,6 +1,7 @@
 # core/value_vector.py — Moral Cognition Engine
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import normalize  # ← ADD THIS
 
 from core.graph_io import update_node_properties, get_node_by_id
 from core.logging_engine import log_action

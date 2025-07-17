@@ -1,7 +1,7 @@
 # core/consciousness_engine.py — Structural Self-Mutation Engine
 from datetime import datetime
 
-from core.graph_io import create_node, create_relationship, update_node_properties
+from core.graph_io import create_node, create_relationship, update_node_properties, run_read_query
 from core.logging_engine import log_action
 from core.self_concept import update_self_concept
 

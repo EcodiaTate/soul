@@ -45,16 +45,16 @@ def run_write_query(query: str, parameters: dict = None) -> dict:
             logging.error(f"Neo4j Write Error: {e}")
             return {"status": "error", "message": str(e)}
 
-def run_read_query(query: str, parameters: dict = None) -> list[dict]:
-    """Run a Cypher read query and return records as a list of dicts."""
+def run_read_query(query: str, parameters: dict = None) -> dict:
+    """Run a Cypher read query and return wrapped records."""
     driver = get_neo4j_driver()
     with driver.session() as session:
         try:
             result = session.read_transaction(lambda tx: tx.run(query, parameters or {}).data())
-            return result
+            return {"status": "success", "result": result}
         except Exception as e:
             logging.error(f"Neo4j Read Error: {e}")
-            return []
+            return {"status": "error", "message": str(e), "result": []}
 
 def create_node(label: str, properties: dict) -> dict:
     """Create a new node with specified label and properties."""
@@ -78,14 +78,11 @@ def get_node_by_id(node_id: str) -> dict:
     """Retrieve a node and its properties by ID."""
     query = "MATCH (n {id: $node_id}) RETURN n LIMIT 1"
     result = run_read_query(query, {"node_id": node_id})
-    return result[0]["n"] if result else {}
+    records = result.get("result", [])
+    return records[0].get("n", {}) if records else {}
 
 def update_node_properties(node_id: str, new_props: dict) -> bool:
     """Merge new properties into an existing node."""
     query = "MATCH (n {id: $node_id}) SET n += $props RETURN n"
     result = run_write_query(query, {"node_id": node_id, "props": new_props})
     return result["status"] == "success"
-
-# Optional: Ensure a graceful shutdown when needed
-# Example: in your main app entrypoint, call close_driver() on exit/shutdown
-

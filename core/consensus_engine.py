@@ -16,7 +16,10 @@ consensus_structure = {
     "confidence_score": 0.81,
     "rationale": "Three agents cited alignment failure with prior values.",
     "timestamp": "ISO",
-    "status": "stable" | "escalated"
+    "status": "stable"  # or set to whatever value you want
+# If you want a type hint for a function, use Literal
+# from typing import Literal
+# def myfunc(status: Literal["stable", "escalated"]):
 }
 
 # --- Core Functions ---

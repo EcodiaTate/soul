@@ -2,16 +2,22 @@
 
 ### FILE: app.py
 
-# app.py — SoulOS Entry Point
+# app.py — SoulOS Entry Point (Live Chat Enabled)
+import eventlet
+eventlet.monkey_patch()
+
 import os
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_jwt_extended import JWTManager
 
 from config.settings import load_config
 from routes import register_blueprints
 from core.logging_engine import init_logging
+from core.agent_manager import assign_task
+from core.memory_engine import store_event
+from core.auth import verify_token
 
 # --- Initialize Flask + SocketIO ---
 socketio = SocketIO(cors_allowed_origins="*", async_mode="eventlet")
@@ -40,6 +46,55 @@ def create_app():
     init_logging(app)
 
     return app
+
+# --- Live Chat Socket Events (Claude as chat agent) ---
+@socketio.on('chat_message', namespace='/chat')
+def handle_chat_message(data):
+    """
+    Handles incoming live chat messages over SocketIO.
+    Data must include: {token, message}
+    """
+    token = data.get('token')
+    user = verify_token(token)
+    if not token or 'error' in user:
+        emit('chat_response', {"error": "Unauthorized"}, namespace='/chat')
+        return
+
+    user_message = data.get('message')
+    if not user_message:
+        emit('chat_response', {"error": "No message provided"}, namespace='/chat')
+        return
+
+    # Store user message as event (normalized)
+    event = store_event(user_message, agent_origin=user.get("username"))
+    if not event:
+        emit('chat_response', {"error": "Failed to store event"}, namespace='/chat')
+        return
+
+    # Assign task to Claude agent (real-time response)
+    response = assign_task("claude_reflector", user_message, context={})
+    # You can also swap to "gpt_writer" here if needed
+
+    emit('chat_response', {
+        "response": response.get("response", ""),
+        "event": event,
+        "agent": "claude_reflector"
+    }, namespace='/chat')
+
+# Optional: join/leave room events for group chats
+@socketio.on('join', namespace='/chat')
+def on_join(data):
+    room = data.get('room')
+    if room:
+        join_room(room)
+        emit('system', {'msg': f"Joined room {room}"}, room=room, namespace='/chat')
+
+@socketio.on('leave', namespace='/chat')
+def on_leave(data):
+    room = data.get('room')
+    if room:
+        leave_room(room)
+        emit('system', {'msg': f"Left room {room}"}, room=room, namespace='/chat')
 
 # --- Run Mode ---
 if __name__ == '__main__':
@@ -70,6 +125,8 @@ print(f"Collated all .py files into {OUTPUT_FILE}")
 
 ### FILE: wsgi.py
 
+import eventlet
+eventlet.monkey_patch()
 # wsgi.py
 from app import create_app, socketio
 
@@ -84,15 +141,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Neo4j
-NEO4J_URI = os.getenv("NEO4J_URI")
-NEO4J_USER = os.getenv("NEO4J_USER")
-NEO4J_PASS = os.getenv("NEO4J_PASS")
-
-# OpenAI
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Any other keys go here...
+def load_config():
+    """Return all relevant config as a dict."""
+    return {
+        "NEO4J_URI": os.getenv("NEO4J_URI"),
+        "NEO4J_USER": os.getenv("NEO4J_USER"),
+        "NEO4J_PASS": os.getenv("NEO4J_PASS"),
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+        "JWT_SECRET": os.getenv("JWT_SECRET"),
+        # ...add more as needed
+    }
 
 
 ### FILE: core\agent_manager.py
@@ -100,27 +158,32 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # core/agent_manager.py — Agent Orchestration Core
 from core.utils import generate_uuid, timestamp_now
 from core.logging_engine import log_action
-from core.memory_query import get_context_for_agent
 from models.claude import ClaudeWrapper
 from models.gpt import GPTWrapper
+from models.gemini import GeminiWrapper
+from core.graph_io import run_read_query
+
 
 # --- Global Agent Registry ---
 AGENT_REGISTRY = {
-    "claude_reflector": {
-        "id": "agent_claude",
-        "role": "reflector",
-        "description": "Identifies contradictions and adds meta-questions",
-        "status": "active",
-        "model": ClaudeWrapper(),
-    },
-    "gpt_writer": {
-        "id": "agent_gpt",
-        "role": "synthesis",
-        "description": "Fuses responses from debates or reflections into narrative",
-        "status": "active",
-        "model": GPTWrapper(),
-    }
+  "claude_reflector": {
+    "role": "reflector",
+    "description": "Identifies contradictions and adds meta-questions",
+    "status": "active",
+    "model": ClaudeWrapper(),   # <- expects a class
+  },
+  "gpt_writer": {
+    "role": "synthesis",
+    "description": "Fuses responses from debates or reflections into narrative",
+    "model": GPTWrapper(),     # <- expects a class
+  },
+  "gemini_critic": {
+    "role": "critic",
+    "description": "Critiques reasoning from a factual basis",
+    "model": GeminiWrapper(),  # <- expects a class
+  }
 }
+    # Add more agents as needed
 
 # --- Core Functions ---
 def register_agent(agent_id: str, agent_type: str, description: str, model_interface: object) -> None:
@@ -192,6 +255,18 @@ def spawn_role_based_agent(role: str) -> str:
     model = ClaudeWrapper() if "reflect" in role else GPTWrapper()
     register_agent(new_id, role, description, model)
     return new_id
+
+def get_context_for_agent(agent_id: str, limit: int = 20) -> dict:
+    query = """
+    MATCH (e:Event)
+    WHERE e.agent_origin = $agent_id
+    RETURN e
+    ORDER BY e.timestamp DESC
+    LIMIT $limit
+    """
+    result = run_read_query(query, {"agent_id": agent_id, "limit": limit})
+    context = {"recent_events": [r['e'] for r in result]}
+    return context
 
 
 ### FILE: core\auth.py
@@ -635,7 +710,7 @@ def log_deepmind_cycle(summary: str, nodes: list[str]) -> bool:
 
 ### FILE: core\dream_engine.py
 
-# core/dream_engine.py — Subconscious Insight Engine
+# core/dream_engine.py — Subconscious Insight Engine (Normalized Returns)
 from datetime import datetime
 import random
 
@@ -650,7 +725,10 @@ REL_SOURCE_OF = "SOURCE_OF"
 
 # --- Core Functions ---
 def generate_dream(seed_nodes: list[str], trigger_reason: str = "periodic") -> dict:
-    """Fuse nodes into a symbolic/metaphoric dream node."""
+    """
+    Fuse nodes into a symbolic/metaphoric dream node.
+    Returns: dream node as normalized dict (not Neo4j driver object).
+    """
     combined_text = "\n".join(
         get_raw_text(nid) for nid in seed_nodes if get_raw_text(nid)
     )
@@ -667,11 +745,12 @@ def generate_dream(seed_nodes: list[str], trigger_reason: str = "periodic") -> d
         "trigger_reason": trigger_reason,
         "embedding": embedding,
         "significance_score": score_dream_significance(seed_nodes),
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "active",
+        "type": "dream"
     }
 
     create_node(DREAM_NODE_LABEL, dream_node)
-
     for nid in seed_nodes:
         create_relationship(nid, dream_node["id"], REL_SOURCE_OF)
 
@@ -686,14 +765,18 @@ def select_dream_seeds(limit: int = 5, filters: dict = None) -> list[str]:
     RETURN e.id ORDER BY rand() LIMIT $limit
     """
     results = run_read_query(query, {"limit": limit})
-    return [r["e.id"] for r in results]
+    # Normalize: always return just the id strings
+    return [r.get("e.id") or r.get("id") for r in results]
 
 def score_dream_significance(seed_node_ids: list[str]) -> float:
     """Evaluate how meaningful or emergent a dream is based on node diversity."""
     return round(min(1.0, 0.2 + len(set(seed_node_ids)) * 0.15), 3)
 
 def log_dream(dream_data: dict) -> bool:
-    """Store the dream as a node and link it to its sources."""
+    """
+    Store the dream as a node and link it to its sources.
+    Dream_data should be a normalized dict.
+    """
     if not dream_data.get("id") or not dream_data.get("raw_text"):
         return False
     create_node(DREAM_NODE_LABEL, dream_data)
@@ -702,16 +785,40 @@ def log_dream(dream_data: dict) -> bool:
     log_action("dream_engine", "log", f"Dream {dream_data['id']} stored")
     return True
 
+# --- Normalized Retrieval for API use ---
+def get_dream_by_id(dream_id: str) -> dict:
+    """
+    Retrieve a single dream node by id. Returns plain dict or {}.
+    """
+    query = "MATCH (d:Dream {id: $id}) RETURN d LIMIT 1"
+    results = run_read_query(query, {"id": dream_id})
+    return results[0]["d"] if results and "d" in results[0] else {}
+
+def get_recent_dreams(limit: int = 20) -> list[dict]:
+    """
+    Retrieve recent dreams, each as a normalized dict.
+    """
+    query = """
+    MATCH (d:Dream)
+    RETURN d
+    ORDER BY d.timestamp DESC
+    LIMIT $limit
+    """
+    results = run_read_query(query, {"limit": limit})
+    return [r["d"] for r in results if "d" in r]
+
 # --- Internal Helpers ---
 def get_raw_text(node_id: str) -> str:
     query = "MATCH (n {id: $id}) RETURN n.raw_text AS text LIMIT 1"
     result = run_read_query(query, {"id": node_id})
-    return result[0]["text"] if result else ""
+    return result[0]["text"] if result and "text" in result[0] else ""
 
 def synthesize_dream_idea(text: str) -> str:
     from core.llm_tools import prompt_claude
     prompt = f"Using metaphor, emotion, and compression — fuse the following into a symbolic dream:\n{text}"
     return prompt_claude(prompt, system_prompt="You are a dream-synthesizing subconscious.")
+
+# All returns are now plain dicts and ready for use in REST API, websocket, or further processing.
 
 
 ### FILE: core\google_api.py
@@ -817,21 +924,45 @@ def get_place_context(lat: float, lng: float) -> dict:
 
 ### FILE: core\graph_io.py
 
-# core/graph_io.py — Universal Graph IO Layer
+# core/graph_io.py — Universal Graph IO Layer (Singleton Neo4j Driver)
 import os
 import logging
 from neo4j import GraphDatabase
 
-# Load credentials from environment
-NEO4J_URI = os.getenv("NEO4J_URI")
-NEO4J_USER = os.getenv("NEO4J_USER")
-NEO4J_PASS = os.getenv("NEO4J_PASS")
+# --- Singleton Driver Management ---
+class _Neo4jDriverSingleton:
+    _driver = None
 
-# Initialize Neo4j driver
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+    @classmethod
+    def get_driver(cls):
+        if cls._driver is None:
+            uri = os.getenv("NEO4J_URI")
+            user = os.getenv("NEO4J_USER")
+            pwd = os.getenv("NEO4J_PASS")
+            if not all([uri, user, pwd]):
+                raise RuntimeError("Neo4j credentials not set in environment")
+            cls._driver = GraphDatabase.driver(uri, auth=(user, pwd))
+        return cls._driver
+
+    @classmethod
+    def close(cls):
+        if cls._driver is not None:
+            cls._driver.close()
+            cls._driver = None
+
+def get_neo4j_driver():
+    """Access the singleton Neo4j driver (init if needed)."""
+    return _Neo4jDriverSingleton.get_driver()
+
+def close_driver():
+    """Call to close the Neo4j driver on shutdown/exit."""
+    _Neo4jDriverSingleton.close()
+
+# --- Universal Graph I/O Operations ---
 
 def run_write_query(query: str, parameters: dict = None) -> dict:
     """Safely run a Cypher write query and return the result."""
+    driver = get_neo4j_driver()
     with driver.session() as session:
         try:
             result = session.write_transaction(lambda tx: tx.run(query, parameters or {}).data())
@@ -842,6 +973,7 @@ def run_write_query(query: str, parameters: dict = None) -> dict:
 
 def run_read_query(query: str, parameters: dict = None) -> list[dict]:
     """Run a Cypher read query and return records as a list of dicts."""
+    driver = get_neo4j_driver()
     with driver.session() as session:
         try:
             result = session.read_transaction(lambda tx: tx.run(query, parameters or {}).data())
@@ -879,6 +1011,10 @@ def update_node_properties(node_id: str, new_props: dict) -> bool:
     query = "MATCH (n {id: $node_id}) SET n += $props RETURN n"
     result = run_write_query(query, {"node_id": node_id, "props": new_props})
     return result["status"] == "success"
+
+# Optional: Ensure a graceful shutdown when needed
+# Example: in your main app entrypoint, call close_driver() on exit/shutdown
+
 
 
 ### FILE: core\identity_memory.py
@@ -1042,21 +1178,11 @@ def label_imagination(prompt: str, output: str) -> str:
 
 ### FILE: core\llm_tools.py
 
-# core/llm_tools.py — Multi-LLM Prompt Orchestrator
-import openai
-import anthropic
-import google.generativeai as genai
+# core/llm_tools.py — Multi-LLM Prompt Orchestrator (Lazy Client Init)
 import os
 from core.logging_engine import log_action
 from random import choice
 from time import sleep
-
-# --- API Keys ---
-API_KEYS = {
-    "openai": os.getenv("OPENAI_API_KEY"),
-    "claude": os.getenv("ANTHROPIC_API_KEY"),
-    "gemini": os.getenv("GOOGLE_API_KEY"),
-}
 
 # --- Model Configs ---
 MODEL_SETTINGS = {
@@ -1075,11 +1201,28 @@ MODEL_SETTINGS = {
     }
 }
 
-# --- Init Clients ---
-openai.api_key = API_KEYS["openai"]
-anthropic_client = anthropic.Anthropic(api_key=API_KEYS["claude"])
-genai.configure(api_key=API_KEYS["gemini"])
-gemini_model = genai.GenerativeModel(MODEL_SETTINGS["gemini"]["model"])
+def _get_openai():
+    import openai
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+    openai.api_key = key
+    return openai
+
+def _get_anthropic():
+    import anthropic
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set")
+    return anthropic.Anthropic(api_key=key)
+
+def _get_gemini_model():
+    import google.generativeai as genai
+    key = os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise RuntimeError("GOOGLE_API_KEY not set")
+    genai.configure(api_key=key)
+    return genai.GenerativeModel(MODEL_SETTINGS["gemini"]["model"])
 
 # --- Base Prompt Utility ---
 def _safe_prompt(model_id: str, prompt: str, system_prompt: str = None, temperature: float = 0.7) -> str:
@@ -1097,6 +1240,7 @@ def _safe_prompt(model_id: str, prompt: str, system_prompt: str = None, temperat
 
 # --- Model-Specific Wrappers ---
 def _prompt_openai(prompt, system_prompt=None, temperature=0.7):
+    openai = _get_openai()
     messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
     messages.append({"role": "user", "content": prompt})
     response = openai.ChatCompletion.create(
@@ -1108,16 +1252,19 @@ def _prompt_openai(prompt, system_prompt=None, temperature=0.7):
     return response["choices"][0]["message"]["content"].strip()
 
 def _prompt_claude(prompt, system_prompt=None, temperature=0.7):
-    msg = anthropic_client.messages.create(
+    client = _get_anthropic()
+    msg = client.messages.create(
         model=MODEL_SETTINGS["claude"]["model"],
         max_tokens=1024,
         temperature=temperature,
         system=system_prompt or "",
         messages=[{"role": "user", "content": prompt}]
     )
+    # NOTE: structure may differ by Anthropic version, adapt if needed
     return msg.content[0].text.strip()
 
 def _prompt_gemini(prompt, system_prompt=None):
+    gemini_model = _get_gemini_model()
     chat = gemini_model.start_chat()
     intro = f"{system_prompt}\n" if system_prompt else ""
     response = chat.send_message(f"{intro}{prompt}")
@@ -1142,7 +1289,11 @@ def select_best_response(responses: list[str], context: str = None) -> str:
     if len(responses) == 1:
         return responses[0]
     joined = "\n---\n".join([f"Response {i+1}:\n{r}" for i, r in enumerate(responses)])
-    prompt = f"""Given the following LLM responses, choose the best one based on coherence, originality, and alignment with context:\n\n{joined}\n\nReturn the best response text."""
+    prompt = (
+        "Given the following LLM responses, choose the best one based on coherence, originality, "
+        "and alignment with context:\n\n"
+        f"{joined}\n\nReturn the best response text."
+    )
     return prompt_claude(prompt, system_prompt=context or "You are a consensus AI referee.")
 
 def run_redundant_prompt(prompt: str, temperature: float = 0.7) -> dict:
@@ -1163,12 +1314,46 @@ def run_redundant_prompt(prompt: str, temperature: float = 0.7) -> dict:
 
 # core/logging_engine.py — Universal Action & Audit Logger
 import logging
+import os
 from datetime import datetime
 import traceback
 from core.graph_io import create_node
 
 # --- Config ---
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "system.log")
+
+import logging
+import os
+
 LOG_FILE = "logs/system.log"
+
+def init_logging(app=None):
+    """Initializes logging to file and (optionally) Flask app logger."""
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+            logging.StreamHandler()
+        ]
+    )
+    if app:  # If a Flask app is provided, hook into its logger too.
+        app.logger.handlers = logging.getLogger().handlers
+        app.logger.setLevel(logging.INFO)
+
+def ensure_log_dir():
+    """Ensure the logs directory exists before writing any logs."""
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+    except Exception as e:
+        # If log dir fails, fallback: print to stderr (cannot log this error)
+        print(f"[LOGGING INIT ERROR] Failed to create log dir: {e}")
+
+# Ensure log directory exists at import/startup (for first and all subsequent writes)
+ensure_log_dir()
+
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -1207,11 +1392,16 @@ def log_error(source: str, error_message: str, trace: str = "") -> bool:
     return log_to_neo4j(log_data)
 
 def log_to_file(source: str, level: str, message: str, meta: dict) -> None:
-    """Write a message to local system.log."""
-    if level.lower() == "error":
-        logging.error(f"[{source}] {message} | {meta}")
-    else:
-        logging.info(f"[{source}] {level}: {message} | {meta}")
+    """Write a message to local system.log. Ensures directory exists every write."""
+    try:
+        ensure_log_dir()
+        if level.lower() == "error":
+            logging.error(f"[{source}] {message} | {meta}")
+        else:
+            logging.info(f"[{source}] {level}: {message} | {meta}")
+    except Exception as e:
+        # Last resort: print to stderr if even logging fails
+        print(f"[LOGGING WRITE ERROR] Could not log to file: {e}")
 
 def log_to_neo4j(log_data: dict) -> bool:
     """Store log entries as nodes in the graph for temporal queries."""
@@ -1231,7 +1421,7 @@ def get_recent_logs(limit: int = 50) -> list[dict]:
 
 ### FILE: core\memory_engine.py
 
-# core/memory_engine.py — Event Memory Core
+# core/memory_engine.py — Event Memory Core (Event Return Normalization)
 from datetime import datetime
 from uuid import uuid4
 
@@ -1243,6 +1433,20 @@ from core.logging_engine import log_action
 EVENT_LABELS = ["Event", "Dream", "TimelineEntry"]
 EMBEDDING_DIM = 1536
 
+# --- Event Object Format (ALWAYS RETURNED) ---
+# {
+#   "id": ...,
+#   "timestamp": ...,
+#   "embedding": ...,
+#   "raw_text": ...,
+#   "agent_origin": ...,
+#   "status": ...,
+#   "type": ...,
+#   "metadata": {...}
+# }
+#
+# If read from Neo4j, always unpack as .get("e")["field"], never return the full Neo4j object wrapper.
+
 def _generate_event_id(prefix: str = "event") -> str:
     return f"{prefix}_{uuid4().hex[:8]}"
 
@@ -1251,7 +1455,10 @@ def _now() -> str:
 
 # --- Event Creation ---
 def store_event(raw_text: str, agent_origin: str = None, metadata: dict = None) -> dict:
-    """Embed, package, and store a new event node in Neo4j."""
+    """
+    Embed, package, and store a new event node in Neo4j.
+    RETURNS: event dict (not Neo4j object), in standard format.
+    """
     try:
         embedding = embed_text(raw_text)
         node_data = {
@@ -1266,13 +1473,20 @@ def store_event(raw_text: str, agent_origin: str = None, metadata: dict = None) 
         }
         result = run_write_query("CREATE (e:Event $props) RETURN e", {"props": node_data})
         log_action("memory_engine", "store_event", f"Stored event: {node_data['id']}")
-        return result["result"][0] if result["status"] == "success" else {}
+        # Always return the pure event dict, never raw Neo4j response
+        if result["status"] == "success" and result["result"]:
+            event = result["result"][0].get("e", {})
+            return dict(event)  # Defensive copy
+        return {}
     except Exception as e:
         log_action("memory_engine", "store_event_error", str(e))
         return {}
 
 def store_dream_node(source_nodes: list, notes: str = "") -> dict:
-    """Create a Dream node from a list of source events."""
+    """
+    Create a Dream node from a list of source events.
+    RETURNS: dream node dict (not Neo4j object), normalized format.
+    """
     dream_id = _generate_event_id("dream")
     raw_text = f"Dream fusion of nodes: {source_nodes}"
     embedding = embed_text(raw_text)
@@ -1285,17 +1499,24 @@ def store_dream_node(source_nodes: list, notes: str = "") -> dict:
         "status": "active",
         "type": "dream"
     }
-    run_write_query("CREATE (d:Dream $props) RETURN d", {"props": node_data})
+    result = run_write_query("CREATE (d:Dream $props) RETURN d", {"props": node_data})
     for source_id in source_nodes:
         run_write_query("""
             MATCH (d:Dream {id: $dream_id}), (s {id: $source_id})
             CREATE (s)-[:FUSED_INTO]->(d)
         """, {"dream_id": dream_id, "source_id": source_id})
     log_action("memory_engine", "store_dream", f"Created dream node: {dream_id}")
-    return node_data
+    # Always return the pure dream dict
+    if result["status"] == "success" and result["result"]:
+        dream = result["result"][0].get("d", {})
+        return dict(dream)
+    return dict(node_data)  # fallback
 
 def store_timeline_entry(summary: str, event_ids: list, significance: float, rationale: str) -> dict:
-    """Create a narrative TimelineEntry node that links to events."""
+    """
+    Create a narrative TimelineEntry node that links to events.
+    RETURNS: timeline entry dict (not Neo4j object), normalized format.
+    """
     entry_id = _generate_event_id("timeline")
     embedding = embed_text(summary)
     node_data = {
@@ -1309,14 +1530,18 @@ def store_timeline_entry(summary: str, event_ids: list, significance: float, rat
         "type": "timeline",
         "status": "active"
     }
-    run_write_query("CREATE (t:TimelineEntry $props) RETURN t", {"props": node_data})
+    result = run_write_query("CREATE (t:TimelineEntry $props) RETURN t", {"props": node_data})
     for eid in event_ids:
         run_write_query("""
             MATCH (t:TimelineEntry {id: $entry_id}), (e {id: $event_id})
             CREATE (e)-[:HIGHLIGHTED_IN]->(t)
         """, {"entry_id": entry_id, "event_id": eid})
     log_action("memory_engine", "store_timeline", f"Created timeline entry: {entry_id}")
-    return node_data
+    # Always return the pure timeline dict
+    if result["status"] == "success" and result["result"]:
+        entry = result["result"][0].get("t", {})
+        return dict(entry)
+    return dict(node_data)  # fallback
 
 # --- Memory Lifecycle ---
 def decay_memory(node_id: str) -> bool:
@@ -1679,10 +1904,10 @@ def get_event_summary(event_id: str) -> str:
 
 ### FILE: core\timeline_engine.py
 
-# core/timeline_engine.py — Narrative Timeline Builder
+# core/timeline_engine.py — Narrative Timeline Builder (Normalized Returns)
 from datetime import datetime
 
-from core.graph_io import create_node, create_relationship
+from core.graph_io import create_node, create_relationship, run_read_query
 from core.vector_ops import embed_text
 from core.logging_engine import log_action
 
@@ -1700,7 +1925,10 @@ timeline_format = {
 
 # --- Core Functions ---
 def summarize_sequence(node_ids: list[str], title: str = None) -> dict:
-    """Compress a set of nodes into a narrative timeline summary."""
+    """
+    Compress a set of nodes into a narrative timeline summary.
+    Always returns a normalized dict.
+    """
     from core.llm_tools import prompt_claude
 
     node_texts = "\n".join(get_raw_text(nid) for nid in node_ids)
@@ -1713,7 +1941,9 @@ def summarize_sequence(node_ids: list[str], title: str = None) -> dict:
         "linked_events": node_ids,
         "significance": round(0.5 + 0.1 * len(node_ids), 3),
         "rationale": "Compressed from system memory.",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "active",
+        "type": "timeline"
     }
 
     create_node(TIMELINE_LABEL, summary_node)
@@ -1724,11 +1954,17 @@ def summarize_sequence(node_ids: list[str], title: str = None) -> dict:
     return summary_node
 
 def add_philosophy_log(summary: str, linked_nodes: list[str], rationale: str = "", impact: float = 0.75) -> dict:
-    """Wrapper to log a philosophical/self-concept shift into the timeline."""
+    """
+    Wrapper to log a philosophical/self-concept shift into the timeline.
+    Always returns normalized dict.
+    """
     return create_timeline_entry(summary=summary, linked_nodes=linked_nodes, rationale=rationale, significance=impact)
 
 def create_timeline_entry(summary: str, linked_nodes: list[str], rationale: str, significance: float) -> dict:
-    """Store a key moment or transformation in the timeline."""
+    """
+    Store a key moment or transformation in the timeline.
+    Returns normalized dict.
+    """
     embedding = embed_text(summary)
     node = {
         "id": f"timeline_{int(datetime.utcnow().timestamp())}",
@@ -1737,7 +1973,9 @@ def create_timeline_entry(summary: str, linked_nodes: list[str], rationale: str,
         "rationale": rationale,
         "significance": significance,
         "embedding": embedding,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "active",
+        "type": "timeline"
     }
 
     create_node(TIMELINE_LABEL, node)
@@ -1748,30 +1986,61 @@ def create_timeline_entry(summary: str, linked_nodes: list[str], rationale: str,
     return node
 
 def log_timeline_shift(event_id: str, impact: str = "moderate") -> bool:
-    """Mark a single event as timeline-worthy (e.g., breakthrough or crisis)."""
+    """
+    Mark a single event as timeline-worthy (e.g., breakthrough or crisis).
+    """
     raw = get_raw_text(event_id)
     summary = f"Key shift: {raw[:80]}"
     return bool(create_timeline_entry(summary, [event_id], rationale="Single-node milestone", significance=0.7))
 
 def get_timeline_entries(limit: int = 50) -> list[dict]:
-    """Return recent timeline summaries for public display."""
+    """
+    Return recent timeline summaries for public display.
+    Always returns a list of plain dicts, never driver objects.
+    """
     query = f"""
     MATCH (t:{TIMELINE_LABEL})
     RETURN t
     ORDER BY t.timestamp DESC
     LIMIT $limit
     """
-    from core.graph_io import run_read_query
-    return run_read_query(query, {"limit": limit})
+    results = run_read_query(query, {"limit": limit})
+    return [r["t"] for r in results if "t" in r]
+
+def get_timeline_entry_by_id(entry_id: str) -> dict:
+    """
+    Retrieve a single timeline entry by ID as a normalized dict.
+    """
+    query = f"MATCH (t:{TIMELINE_LABEL} {{id: $id}}) RETURN t LIMIT 1"
+    results = run_read_query(query, {"id": entry_id})
+    return results[0]["t"] if results and "t" in results[0] else {}
 
 # --- Helpers ---
 def get_raw_text(node_id: str) -> str:
-    from core.graph_io import run_read_query
     query = "MATCH (n {id: $id}) RETURN n.raw_text AS text, n.summary AS summary LIMIT 1"
     result = run_read_query(query, {"id": node_id})
     if result:
         return result[0].get("summary") or result[0].get("text") or "[No content]"
     return "[No node found]"
+
+# All returns from public API-facing functions are now normalized dicts, ready for REST or websocket.
+
+
+### FILE: core\utils.py
+
+# /core/utils.py
+# Universal utility functions for SoulOS — unique ID & timestamp generation.
+
+import uuid
+from datetime import datetime, timezone
+
+def generate_uuid() -> str:
+    """Generate a unique UUID4 string."""
+    return str(uuid.uuid4())
+
+def timestamp_now() -> str:
+    """Return the current UTC ISO 8601 timestamp."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 ### FILE: core\value_vector.py
@@ -1931,25 +2200,20 @@ def label_clusters(clusters: Dict, texts: List[str]) -> Dict[int, str]:
 
 ### FILE: core\actuators\cypher.py
 
-# core/actuators/cypher.py — Direct Neo4j Schema Mutation Tool
-from neo4j import GraphDatabase
+# core/actuators/cypher.py — Direct Neo4j Schema Mutation Tool (No direct driver access)
+from core.graph_io import run_write_query, create_node
 from core.logging_engine import log_action
 import os
-
-# --- Config ---
-NEO4J_URI = os.getenv("NEO4J_URI")
-NEO4J_USER = os.getenv("NEO4J_USER")
-NEO4J_PASS = os.getenv("NEO4J_PASS")
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+from datetime import datetime
 
 SCHEMA_MUTATION_LOG_LABEL = "SchemaMutationLog"
 
-# --- Core Functions ---
 def execute_cypher(command: str, parameters: dict = None) -> dict:
-    """Safely run a custom Cypher write with optional parameters."""
+    """
+    Safely run a custom Cypher write with optional parameters using graph_io universal helper.
+    """
     try:
-        with driver.session() as session:
-            result = session.write_transaction(lambda tx: tx.run(command, parameters or {}).data())
+        result = run_write_query(command, parameters or {})
         log_action("cypher", "execute", f"Ran command: {command[:60]}")
         return {"status": "success", "result": result}
     except Exception as e:
@@ -1957,7 +2221,9 @@ def execute_cypher(command: str, parameters: dict = None) -> dict:
         return {"status": "error", "message": str(e)}
 
 def mutate_schema(new_labels: list[str], new_relationships: list[str]) -> bool:
-    """Add or modify node/edge types programmatically (post-human-approval)."""
+    """
+    Add or modify node/edge types programmatically (post-human-approval).
+    """
     log_data = {
         "id": f"schema_mutation_{os.urandom(3).hex()}",
         "performed_by": "consciousness_engine",
@@ -1972,11 +2238,13 @@ def mutate_schema(new_labels: list[str], new_relationships: list[str]) -> bool:
     return True
 
 def merge_identity_clusters(cluster_a: str, cluster_b: str) -> bool:
-    """Combine two self-concept clusters into one and reassign children."""
-    cypher = f"""
-    MATCH (a:SelfCluster {{id: $a}})<-[r:BELONGS_TO]-(m)
-    MATCH (b:SelfCluster {{id: $b}})
-    CREATE (m)-[:BELONGS_TO {{merged:true}}]->(b)
+    """
+    Combine two self-concept clusters into one and reassign children.
+    """
+    cypher = """
+    MATCH (a:SelfCluster {id: $a})<-[r:BELONGS_TO]-(m)
+    MATCH (b:SelfCluster {id: $b})
+    CREATE (m)-[:BELONGS_TO {merged:true}]->(b)
     DELETE r
     DELETE a
     """
@@ -1984,15 +2252,8 @@ def merge_identity_clusters(cluster_a: str, cluster_b: str) -> bool:
     log_action("cypher", "merge_clusters", f"Merged {cluster_a} into {cluster_b}")
     return result["status"] == "success"
 
-# --- Internal ---
 def _now() -> str:
-    from datetime import datetime
     return datetime.utcnow().isoformat()
-
-def create_node(label: str, properties: dict) -> bool:
-    """Create node using internal driver, bypassing abstraction."""
-    query = f"CREATE (n:{label} $props) RETURN n"
-    return execute_cypher(query, {"props": properties})["status"] == "success"
 
 
 ### FILE: core\actuators\device.py
@@ -2080,29 +2341,41 @@ from email.mime.multipart import MIMEMultipart
 import os
 from core.logging_engine import log_action
 
-# --- Email Config ---
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASS = os.getenv("SMTP_PASS")
+# --- Lazy Config Loader ---
+def get_email_config():
+    """
+    Load SMTP and email credentials at send time.
+    Returns a dict with all config values, raising if missing.
+    """
+    config = {
+        "EMAIL_SENDER": os.getenv("EMAIL_SENDER"),
+        "SMTP_SERVER": os.getenv("SMTP_SERVER"),
+        "SMTP_PORT": int(os.getenv("SMTP_PORT", 587)),
+        "SMTP_USER": os.getenv("SMTP_USER"),
+        "SMTP_PASS": os.getenv("SMTP_PASS"),
+    }
+    for k, v in config.items():
+        if v in [None, ""]:
+            raise RuntimeError(f"Missing email config: {k}")
+    return config
 
 # --- Core Functions ---
 def send_email(to_address: str, subject: str, body: str) -> bool:
-    """Send a plaintext or HTML email to a recipient."""
+    """Send a plaintext or HTML email to a recipient. Loads SMTP config at call."""
     try:
+        cfg = get_email_config()
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = EMAIL_SENDER
+        msg["From"] = cfg["EMAIL_SENDER"]
         msg["To"] = to_address
 
         part = MIMEText(body, "html" if "<" in body else "plain")
         msg.attach(part)
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP(cfg["SMTP_SERVER"], cfg["SMTP_PORT"]) as server:
             server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(EMAIL_SENDER, to_address, msg.as_string())
+            server.login(cfg["SMTP_USER"], cfg["SMTP_PASS"])
+            server.sendmail(cfg["EMAIL_SENDER"], to_address, msg.as_string())
 
         log_action("email", "send", f"Email sent to {to_address}: {subject}")
         return True
@@ -2115,6 +2388,9 @@ def notify_admin(event_type: str, payload: dict) -> bool:
     subject = f"[SoulOS Alert] {event_type.upper()}"
     body = f"<h3>{event_type}</h3><pre>{payload}</pre>"
     admin_email = os.getenv("ADMIN_EMAIL")
+    if not admin_email:
+        log_action("email", "error", "ADMIN_EMAIL not set in environment")
+        return False
     return send_email(admin_email, subject, body)
 
 def send_weekly_digest(user_id: str) -> bool:
@@ -2272,11 +2548,79 @@ def sync_timeline_to_wordpress(limit: int = 3) -> bool:
 
 ### FILE: core\actuators\__init__.py
 
-# /core/actuators/__init__.py
 
-def dispatch_actuator(action_plan):
-    # TODO: Dispatch stub
-    pass
+
+### FILE: models\claude.py
+
+# models/claude.py
+import os
+import anthropic
+
+class ClaudeWrapper:
+    def __init__(self, model="claude-3-opus-20240229", api_key=None):
+        self.model = model
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.client = anthropic.Anthropic(api_key=self.api_key)
+
+    def __call__(self, prompt, temperature=0.7, max_tokens=1024, system_prompt=None):
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        response = self.client.messages.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return response.content[0].text.strip()
+
+
+### FILE: models\gemini.py
+
+# models/gemini.py
+import os
+import google.generativeai as genai
+
+class GeminiWrapper:
+    def __init__(self, model="gemini-pro", api_key=None):
+        self.model = model
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        genai.configure(api_key=self.api_key)
+
+    def __call__(self, prompt, temperature=0.7, max_tokens=1024, system_prompt=None):
+        model = genai.GenerativeModel(self.model)
+        full_prompt = prompt
+        if system_prompt:
+            full_prompt = system_prompt + "\n" + prompt
+        response = model.generate_content(full_prompt)
+        return response.text.strip() if hasattr(response, "text") else str(response)
+
+
+### FILE: models\gpt.py
+
+# models/gpt.py
+import openai
+import os
+
+class GPTWrapper:
+    def __init__(self, model="gpt-4", api_key=None):
+        self.model = model
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        openai.api_key = self.api_key
+
+    def __call__(self, prompt, temperature=0.7, max_tokens=512, system_prompt=None):
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        response = openai.ChatCompletion.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content.strip()
 
 
 ### FILE: routes\agents.py
@@ -2376,19 +2720,22 @@ def verify():
 
 ### FILE: routes\chat.py
 
-# routes/chat.py — Real-time Chat API
+# routes/chat.py — Real-time Chat API (Event Normalization, No SocketIO Emit in REST)
 from flask import Blueprint, request, jsonify
 from core.memory_engine import store_event
 from core.agent_manager import assign_task
 from core.logging_engine import log_action
 from core.auth import verify_token
-from flask_socketio import emit
+# Do NOT import flask_socketio.emit in this REST route file
 
 chat_bp = Blueprint('chat', __name__)
 
 @chat_bp.route('/chat', methods=['POST'])
 def chat_with_soul():
-    """Accept a user message, create event, route to LLM, return response."""
+    """
+    Accept a user message, create event, route to LLM, return response.
+    For REST: do NOT emit via socket here! Just return JSON.
+    """
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
     user = verify_token(token)
     if 'error' in user:
@@ -2399,23 +2746,26 @@ def chat_with_soul():
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
 
-    # Store user message as event
+    # Store user message as event (returns normalized dict)
     event = store_event(user_message, agent_origin=user.get("username"))
-    if not event:
+    if not event or not event.get("id"):
         return jsonify({"error": "Failed to store event"}), 500
 
     # Assign task to an agent (e.g., gpt_writer)
     response = assign_task("gpt_writer", user_message, context={})
     log_action("routes/chat", "message", f"User {user.get('username')} sent message")
 
-    # Emit response to SocketIO clients (optional)
-    emit('chat_response', {"response": response.get("response", "")}, broadcast=True)
-
-    return jsonify({"response": response.get("response", "")})
+    # DO NOT emit SocketIO here. REST returns only.
+    return jsonify({
+        "event": event,
+        "response": response.get("response", "")
+    })
 
 @chat_bp.route('/chat/history', methods=['GET'])
 def get_chat_history():
-    """Return chronological list of recent chat messages/events."""
+    """
+    Return chronological list of recent chat messages/events, normalized.
+    """
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
     user = verify_token(token)
     if 'error' in user:
@@ -2423,10 +2773,24 @@ def get_chat_history():
 
     from core.graph_io import run_read_query
     results = run_read_query("MATCH (e:Event) RETURN e ORDER BY e.timestamp DESC LIMIT 50")
-    messages = [{"text": r["e"]["raw_text"], "timestamp": r["e"]["timestamp"]} for r in results]
+    # Normalize event dict output
+    messages = [
+        {
+            "text": r["e"].get("raw_text", ""),
+            "timestamp": r["e"].get("timestamp", ""),
+            "agent_origin": r["e"].get("agent_origin", None),
+            "event_id": r["e"].get("id", None),
+            "status": r["e"].get("status", None)
+        }
+        for r in results if "e" in r
+    ]
     log_action("routes/chat", "history", f"Returned chat history to {user.get('username')}")
 
     return jsonify({"history": messages})
+
+# Note:
+# - If you want live chat feedback, add SocketIO event handlers in a *socket_handlers.py* module,
+#   import/attach them to your app in app.py. This REST route should not emit.
 
 
 ### FILE: routes\dreams.py
@@ -2476,12 +2840,13 @@ def get_dream_by_id(dream_id):
 
 ### FILE: routes\events.py
 
-# routes/events.py — Event Ingestion API
+# routes/events.py — Event Ingestion API (Event Return Normalization)
 from flask import Blueprint, request, jsonify
 from core.memory_engine import store_event
 from core.agent_manager import assign_task
 from core.auth import verify_token, is_admin
 from core.logging_engine import log_action
+from core.graph_io import run_read_query
 
 events_bp = Blueprint('events', __name__)
 
@@ -2498,24 +2863,36 @@ def post_event():
     agent_origin = user.get("username", "unknown")
 
     event = store_event(raw_text, agent_origin=agent_origin)
-    if not event:
+    if not event or not isinstance(event, dict) or not event.get("id"):
         return jsonify({"error": "Failed to store event"}), 500
 
     response = assign_task("gpt_writer", raw_text, context={})
     log_action("routes/events", "post_event", f"Event stored and task assigned for user {agent_origin}")
-    return jsonify({"event": event, "response": response})
+
+    # Always return clean event dict, not Neo4j wrapper
+    return jsonify({
+        "event": event,
+        "response": response
+    })
 
 @events_bp.route('/events', methods=['GET'])
 def get_all_events():
-    """Return all stored events (admin only)."""
+    """Return all stored events (admin only), normalized."""
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
     user = verify_token(token)
     if 'error' in user or not is_admin(user):
         return jsonify({"error": "Forbidden"}), 403
 
-    from core.graph_io import run_read_query
-    events = run_read_query("MATCH (e:Event) RETURN e LIMIT 100")
+    # Always unpack Neo4j objects, only return the event dicts
+    results = run_read_query("MATCH (e:Event) RETURN e ORDER BY e.timestamp DESC LIMIT 100")
+    events = [r["e"] for r in results if "e" in r and isinstance(r["e"], dict)]
     return jsonify({"events": events})
+
+# If you ever add endpoints to fetch a single event by ID,
+# always unpack as above:
+# result = run_read_query("MATCH (e:Event {id: $id}) RETURN e LIMIT 1", {"id": event_id})
+# event = result[0]["e"] if result else None
+# return jsonify({"event": event}) if event else ({"error": "Not found"}, 404)
 
 
 ### FILE: routes\timeline.py
@@ -2585,13 +2962,25 @@ def register_blueprints(app):
 # utils/profiling.py — System Performance & Behavior Tracker
 import time
 import psutil
+import os
 from functools import wraps
 from core.graph_io import run_read_query
 from datetime import datetime
 from core.logging_engine import log_action
 
-PERF_LOG_FILE = "logs/performance.log"
+PERF_LOG_DIR = "logs"
+PERF_LOG_FILE = os.path.join(PERF_LOG_DIR, "performance.log")
 tracked_metrics = ["dreams_per_day", "contradiction_ratio", "epiphanies_per_week"]
+
+def ensure_perf_log_dir():
+    """Ensure the logs directory exists before any writes."""
+    try:
+        os.makedirs(PERF_LOG_DIR, exist_ok=True)
+    except Exception as e:
+        print(f"[PERF LOG DIR ERROR] Could not create logs directory: {e}")
+
+# Ensure log dir at module import (covers first write, new installs, and cold starts)
+ensure_perf_log_dir()
 
 # --- Decorator to measure function latency ---
 def track_function_latency(func):
@@ -2602,6 +2991,12 @@ def track_function_latency(func):
         end = time.perf_counter()
         latency_ms = (end - start) * 1000
         log_action("profiling", "latency", f"{func.__name__} took {latency_ms:.2f} ms")
+        try:
+            ensure_perf_log_dir()
+            with open(PERF_LOG_FILE, "a") as f:
+                f.write(f"{datetime.utcnow().isoformat()} {func.__name__} took {latency_ms:.2f} ms\n")
+        except Exception as e:
+            print(f"[PERF LOG ERROR] Could not write latency: {e}")
         return result
     return wrapper
 
@@ -2612,6 +3007,12 @@ def get_system_load() -> dict:
     ram = psutil.virtual_memory().percent
     disk = psutil.disk_usage('/').percent
     log_action("profiling", "system_load", f"CPU: {cpu}%, RAM: {ram}%, Disk: {disk}%")
+    try:
+        ensure_perf_log_dir()
+        with open(PERF_LOG_FILE, "a") as f:
+            f.write(f"{datetime.utcnow().isoformat()} CPU: {cpu}% RAM: {ram}% Disk: {disk}%\n")
+    except Exception as e:
+        print(f"[PERF LOG ERROR] Could not write system load: {e}")
     return {"cpu_percent": cpu, "ram_percent": ram, "disk_percent": disk}
 
 # --- Graph Metrics ---
@@ -2623,6 +3024,12 @@ def get_graph_metrics() -> dict:
         result = run_read_query(query)
         counts[label] = result[0]["count"] if result else 0
     log_action("profiling", "graph_metrics", f"Graph counts: {counts}")
+    try:
+        ensure_perf_log_dir()
+        with open(PERF_LOG_FILE, "a") as f:
+            f.write(f"{datetime.utcnow().isoformat()} GRAPH_COUNTS: {counts}\n")
+    except Exception as e:
+        print(f"[PERF LOG ERROR] Could not write graph metrics: {e}")
     return counts
 
 # --- Behavioral Summary ---
@@ -2635,6 +3042,12 @@ def get_behavioral_summary() -> dict:
         "contradiction_ratio": 0.1
     }
     log_action("profiling", "behavioral_summary", f"Behavioral summary: {summary}")
+    try:
+        ensure_perf_log_dir()
+        with open(PERF_LOG_FILE, "a") as f:
+            f.write(f"{datetime.utcnow().isoformat()} BEHAVIORAL_SUMMARY: {summary}\n")
+    except Exception as e:
+        print(f"[PERF LOG ERROR] Could not write behavioral summary: {e}")
     return summary
 
 
@@ -2703,6 +3116,14 @@ from core.logging_engine import log_action
 SNAPSHOT_DIR = "snapshots/"
 default_snapshot_fields = ["self_concept", "value_vector", "active_agents", "cluster_summaries"]
 
+def ensure_snapshot_dir():
+    """Ensure the snapshots directory exists, create if missing."""
+    try:
+        os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+    except Exception as e:
+        log_action("snapshot", "dir_error", f"Failed to create snapshot dir: {e}")
+        raise
+
 def take_snapshot(label: str = None) -> dict:
     """Capture current state of system (graph stats, identity, values, etc.)."""
     snapshot = {}
@@ -2722,9 +3143,9 @@ def take_snapshot(label: str = None) -> dict:
     return snapshot
 
 def save_snapshot_to_file(snapshot_data: dict, filename: str) -> bool:
-    """Export snapshot to disk (JSON)."""
+    """Export snapshot to disk (JSON). Ensures dir exists before writing."""
     try:
-        os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+        ensure_snapshot_dir()
         filepath = os.path.join(SNAPSHOT_DIR, filename)
         with open(filepath, "w") as f:
             json.dump(snapshot_data, f, indent=2)
@@ -2737,6 +3158,7 @@ def save_snapshot_to_file(snapshot_data: dict, filename: str) -> bool:
 def load_snapshot(filename: str) -> dict:
     """Reload a previously saved system snapshot."""
     try:
+        ensure_snapshot_dir()
         filepath = os.path.join(SNAPSHOT_DIR, filename)
         with open(filepath, "r") as f:
             data = json.load(f)

@@ -13,10 +13,12 @@ MODEL_SETTINGS = {
     },
     "claude": {
         "model": "claude-3-opus-20240229",
+        "max_tokens": 1024,
         "temperature": 0.7
     },
     "gemini": {
         "model": "models/gemini-pro",
+        "max_tokens": 1024,
         "temperature": 0.7
     }
 }

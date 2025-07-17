@@ -17,6 +17,7 @@ def store_event(text, agent_origin=None, metadata=None):
         "status": "active"
     }
 
+
 @chat_bp.route('/chat', methods=['POST'])
 def chat_with_soul():
     """
@@ -38,7 +39,7 @@ def chat_with_soul():
             log_action("routes/chat", "error", "Failed to store event")
             return jsonify({"error": "Failed to store event"}), 500
 
-        response = assign_task("gpt_writer", user_message, context={}) or {}
+        response = assign_task("claude_reflector", user_message, context={}) or {}
         final_reply = response.get("response", "[No response generated]")
 
         log_action("routes/chat", "message", f"User {user['username']} sent message")

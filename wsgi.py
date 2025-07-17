@@ -1,4 +1,6 @@
 # wsgi.py — Entry Point for Gunicorn + Gevent
+import gevent.monkey
+gevent.monkey.patch_all()
 
 from app import create_app, socketio
 

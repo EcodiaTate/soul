@@ -1,5 +1,8 @@
 # app.py — SoulOS Entry Point (Production Ready with Gevent)
 
+import gevent.monkey
+gevent.monkey.patch_all()
+
 import os
 from flask import Flask
 from flask_cors import CORS

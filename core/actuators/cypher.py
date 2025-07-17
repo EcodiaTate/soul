@@ -1,18 +1,17 @@
-# core/actuators/cypher.py — Direct Neo4j Schema Mutation Tool (Singleton Driver)
-from core.graph_io import get_neo4j_driver, create_node
+# core/actuators/cypher.py — Direct Neo4j Schema Mutation Tool (No direct driver access)
+from core.graph_io import run_write_query, create_node
 from core.logging_engine import log_action
 import os
+from datetime import datetime
 
 SCHEMA_MUTATION_LOG_LABEL = "SchemaMutationLog"
 
 def execute_cypher(command: str, parameters: dict = None) -> dict:
     """
-    Safely run a custom Cypher write with optional parameters using singleton driver.
+    Safely run a custom Cypher write with optional parameters using graph_io universal helper.
     """
-    driver = get_neo4j_driver()
     try:
-        with driver.session() as session:
-            result = session.write_transaction(lambda tx: tx.run(command, parameters or {}).data())
+        result = run_write_query(command, parameters or {})
         log_action("cypher", "execute", f"Ran command: {command[:60]}")
         return {"status": "success", "result": result}
     except Exception as e:
@@ -52,12 +51,4 @@ def merge_identity_clusters(cluster_a: str, cluster_b: str) -> bool:
     return result["status"] == "success"
 
 def _now() -> str:
-    from datetime import datetime
     return datetime.utcnow().isoformat()
-
-def create_node(label: str, properties: dict) -> bool:
-    """
-    Create node using universal graph_io helper. Returns success bool for local use.
-    """
-    from core.graph_io import create_node as universal_create_node
-    return universal_create_node(label, properties)["status"] == "success"

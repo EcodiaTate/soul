@@ -9,6 +9,26 @@ from core.graph_io import create_node
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "system.log")
 
+import logging
+import os
+
+LOG_FILE = "logs/system.log"
+
+def init_logging(app=None):
+    """Initializes logging to file and (optionally) Flask app logger."""
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+            logging.StreamHandler()
+        ]
+    )
+    if app:  # If a Flask app is provided, hook into its logger too.
+        app.logger.handlers = logging.getLogger().handlers
+        app.logger.setLevel(logging.INFO)
+
 def ensure_log_dir():
     """Ensure the logs directory exists before writing any logs."""
     try:

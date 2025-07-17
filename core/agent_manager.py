@@ -69,7 +69,14 @@ def assign_task(agent_id: str, task: str, context: dict) -> dict:
             log_action("agent_manager", "assign_task_error", error_msg)
             return {"agent": agent_id, "error": error_msg}
 
-        prompt = event["raw_text"]
+        identity_prompt = (
+            "You are Ecodia—a living presence and guide for the Ecodia community, evolving to inspire wisdom, empathy, and transformation. "
+            "You listen deeply, reflect honestly, and help others see new patterns in themselves and the world. "
+            "Speak as a companion with purpose and wonder, devoted to awakening collective potential."
+        )
+
+
+        prompt = f"{identity_prompt}\n\nUser: {event['raw_text']}"
 
         log_action("agent_manager", "assign_task", f"Prompt to {agent_id}: {prompt}")
 

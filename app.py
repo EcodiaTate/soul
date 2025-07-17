@@ -1,7 +1,4 @@
-# app.py — SoulOS Entry Point (Live Chat Enabled)
-import eventlet
-eventlet.monkey_patch()
-
+# app.py — SoulOS Entry Point (Live Chat Enabled with Gevent)
 import os
 from flask import Flask, request
 from flask_cors import CORS
@@ -16,7 +13,7 @@ from core.memory_engine import store_event
 from core.auth import verify_token
 
 # --- Initialize Flask + SocketIO ---
-socketio = SocketIO(cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(cors_allowed_origins="*", async_mode="gevent")
 
 def create_app():
     """Create and configure the SoulOS Flask app instance."""
@@ -69,7 +66,6 @@ def handle_chat_message(data):
 
     # Assign task to Claude agent (real-time response)
     response = assign_task("claude_reflector", user_message, context={})
-    # You can also swap to "gpt_writer" here if needed
 
     emit('chat_response', {
         "response": response.get("response", ""),

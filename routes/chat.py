@@ -34,7 +34,7 @@ def chat_with_soul():
 
         # Assign task to agent
         response_obj = assign_task(
-            agent_id="gpt_critic",
+            agent_id="gpt_writer",
             task="respond",
             context={"event": event}
         )

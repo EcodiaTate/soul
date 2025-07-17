@@ -14,7 +14,7 @@ gevent-websocket
 neo4j
 
 # OpenAI, Anthropic, Gemini, LLMs
-openai>=1.0.0
+openai==0.28
 anthropic
 google-generativeai
 

@@ -21,7 +21,7 @@ def _now() -> str:
 def store_event(raw_text: str, agent_origin: str = None, metadata: dict = None) -> dict:
     """
     Embed, package, and store a new event node in Neo4j.
-    RETURNS: event dict (not Neo4j object), in standard format.
+    RETURNS: event dict (not Neo4j object), always with at least raw_text and id.
     """
     try:
         embedding = embed_text(raw_text)
@@ -37,17 +37,38 @@ def store_event(raw_text: str, agent_origin: str = None, metadata: dict = None) 
         }
 
         result = run_write_query("CREATE (e:Event $props) RETURN e", {"props": node_data})
+        # Try to get dict from Neo4j response
         if result and result.get("status") == "success":
             records = result.get("result", [])
-            if records and isinstance(records[0], dict):
-                return dict(records[0].get("e", {}))  # Normalized event dict
+            if records and isinstance(records[0], dict) and "e" in records[0]:
+                event_dict = dict(records[0]["e"])
+                # Ensure critical fields present
+                event_dict.setdefault("id", node_data["id"])
+                event_dict.setdefault("raw_text", node_data["raw_text"])
+                event_dict.setdefault("agent_origin", node_data["agent_origin"])
+                return event_dict
 
+        # On failure, always return fallback event dict for downstream safety
         log_action("memory_engine", "store_event_error", f"Write failed or empty result: {result}")
-        return {}
+        # Fallback: always provide enough for agent context
+        return {
+            "id": node_data["id"],
+            "raw_text": node_data["raw_text"],
+            "agent_origin": node_data["agent_origin"],
+            "status": "failed",
+            "type": "event"
+        }
 
     except Exception as e:
         log_action("memory_engine", "store_event_exception", str(e))
-        return {}
+        # Also return minimal fallback event dict
+        return {
+            "id": "event_error",
+            "raw_text": raw_text,
+            "agent_origin": agent_origin or "system",
+            "status": "error",
+            "type": "event"
+        }
 
 # --- Dream Creation ---
 def store_dream_node(source_nodes: list, notes: str = "") -> dict:

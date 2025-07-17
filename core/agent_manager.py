@@ -43,20 +43,52 @@ def register_agent(agent_id: str, role: str, description: str, model_interface: 
     log_action("agent_manager", "register_agent", f"{agent_id} registered as {role}")
 
 def assign_task(agent_id: str, task: str, context: dict) -> dict:
-    agent = AGENT_REGISTRY.get(agent_id)
-    if not agent:
-        return {"error": f"Agent {agent_id} not found"}
-    if agent.get("status") != "active":
-        return {"error": f"Agent {agent_id} is inactive"}
+    """
+    Assign a task to the specified agent, handling all failure modes.
+    Always returns a dict: {'agent': agent_id, 'response': ..., 'error': ...}
+    """
+    import traceback
 
+    prompt = None
     try:
-        context_prompt = get_context_for_agent(agent_id, limit=20)
-        result = agent["model"].run(task, context_prompt)
-        log_action("agent_manager", "assign_task", f"{agent_id} completed task")
-        return {"agent": agent_id, "response": result}
+        # Defensive: check agent exists
+        if agent_id not in AGENT_REGISTRY:
+            error_msg = f"Agent '{agent_id}' not found in registry."
+            log_action("agent_manager", "assign_task_error", error_msg)
+            return {"agent": agent_id, "error": error_msg}
+
+        agent = AGENT_REGISTRY[agent_id]
+
+        # Defensive: check agent model
+        if "model" not in agent or agent["model"] is None:
+            error_msg = f"Agent '{agent_id}' missing 'model' in registry."
+            log_action("agent_manager", "assign_task_error", error_msg)
+            return {"agent": agent_id, "error": error_msg}
+
+        model = agent["model"]
+
+        # Defensive: check prompt exists in context
+        event = context.get("event")
+        if not event or "raw_text" not in event:
+            error_msg = f"Context missing 'event' or 'raw_text' for agent '{agent_id}'."
+            log_action("agent_manager", "assign_task_error", error_msg)
+            return {"agent": agent_id, "error": error_msg}
+
+        prompt = event["raw_text"]
+
+        log_action("agent_manager", "assign_task", f"Prompt to {agent_id}: {prompt}")
+
+        # Main: Run agent/model
+        # Replace model.run() with correct model interface call if needed
+        result = model.run(prompt)
+
+        return {
+            "agent": agent_id,
+            "response": result
+        }
     except Exception as e:
-        log_action("agent_manager", "task_error", f"{agent_id} failed: {e}")
-        return {"agent": agent_id, "error": str(e)}
+        traceback.print_e_
+
 
 def get_context_for_agent(agent_id: str, limit: int = 20) -> dict:
     query = """

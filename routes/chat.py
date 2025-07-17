@@ -8,12 +8,13 @@ from flask_socketio import emit
 chat_bp = Blueprint('chat', __name__)
 
 @chat_bp.route('/chat', methods=['POST'])
+@chat_bp.route('/chat', methods=['POST'])
 def chat_with_soul():
     """
     Accept a user message, create event in Neo4j, route to LLM agent, return response.
     """
     try:
-        # TEMP AUTH BYPASS (swap with real token verification when needed)
+        # TEMP AUTH BYPASS (swap with real token verification when ready)
         user = {"username": "test_user"}
         # token = request.headers.get("Authorization", "").replace("Bearer ", "")
         # user = verify_token(token)
@@ -25,26 +26,28 @@ def chat_with_soul():
 
         user_message = data["message"]
 
-        # Store event in memory graph
+        # Store event
         event = store_event(
             raw_text=user_message,
             agent_origin=user["username"]
         )
 
-        # Assign task to selected agent
-        response = assign_task(
-            agent_id="gpt_writer",  # hardcoded for now; can later rotate agents
+        # Assign task to agent
+        response_obj = assign_task(
+            agent_id="gpt_writer",
             task="respond",
             context={"event": event}
         )
 
-        # Log full interaction
-        log_action("chat_route", "message_exchange", f"{user['username']} → {user_message} → {response}")
+        # Handle agent failure
+        if isinstance(response_obj, dict) and "error" in response_obj:
+            log_action("chat_route", "agent_error", str(response_obj["error"]))
+            return jsonify({"response": response_obj}), 500
 
-        # Optionally emit via SocketIO if UI is real-time
-        # emit("chat_response", {"user": user["username"], "message": response}, broadcast=True)
-
-        return jsonify({"response": response})
+        # Log and return
+        final_response = response_obj.get("response") if isinstance(response_obj, dict) else str(response_obj)
+        log_action("chat_route", "message_exchange", f"{user['username']} → {user_message} → {final_response}")
+        return jsonify({"response": final_response})
 
     except Exception as e:
         import traceback

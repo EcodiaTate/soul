@@ -1,11 +1,9 @@
-# routes/chat.py — Real-time Chat API (Production Ready, No SocketIO Emit in REST)
-
 from flask import Blueprint, request, jsonify
 from core.memory_engine import store_event
 from core.agent_manager import assign_task
 from core.logging_engine import log_action
-from core.auth import verify_token  # enable when ready
-import traceback
+from core.auth import verify_token
+from flask_socketio import emit
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -15,76 +13,49 @@ def chat_with_soul():
     Accept a user message, create event in Neo4j, route to LLM agent, return response.
     """
     try:
-        # TEMP AUTH BYPASS (replace with verify_token(token) when ready)
+        # TEMP AUTH BYPASS (swap with real token verification when needed)
         user = {"username": "test_user"}
+        # token = request.headers.get("Authorization", "").replace("Bearer ", "")
+        # user = verify_token(token)
 
         data = request.get_json(silent=True)
         if not data or "message" not in data:
-            log_action("routes/chat", "error", "Malformed or missing JSON in /chat POST")
-            return jsonify({"error": "Malformed or missing JSON body"}), 400
+            log_action("chat_route", "bad_request", "Missing 'message' in request body")
+            return jsonify({"error": "Missing 'message' in request body"}), 400
 
         user_message = data["message"]
 
-        # Store event in Neo4j via memory engine
-        event = store_event(user_message, agent_origin=user["username"])
-        if not event or not event.get("id"):
-            log_action("routes/chat", "error", "Event creation failed")
-            return jsonify({"error": "Failed to store event"}), 500
+        # Store event in memory graph
+        event = store_event(
+            raw_text=user_message,
+            agent_origin=user["username"]
+        )
 
-        # Assign task to core agent (e.g., Claude)
-        response = assign_task("claude_reflector", user_message, context={})
-        final_reply = response.get("response") or response.get("error", "[No response generated]")
+        # Assign task to selected agent
+        response = assign_task(
+            agent_id="gpt_writer",  # hardcoded for now; can later rotate agents
+            task="respond",
+            context={"event": event}
+        )
 
-        log_action("routes/chat", "message", f"User {user['username']} sent message")
+        # Log full interaction
+        log_action("chat_route", "message_exchange", f"{user['username']} → {user_message} → {response}")
 
-        return jsonify({
-            "event": event,
-            "response": final_reply
-        })
+        # Optionally emit via SocketIO if UI is real-time
+        # emit("chat_response", {"user": user["username"], "message": response}, broadcast=True)
+
+        return jsonify({"response": response})
 
     except Exception as e:
-        log_action("routes/chat", "exception", str(e))
+        import traceback
         traceback.print_exc()
-        return jsonify({
-            "error": "Internal Server Error",
-            "detail": str(e)
-        }), 500
+        log_action("chat_route", "server_error", str(e))
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @chat_bp.route('/chat/history', methods=['GET'])
 def get_chat_history():
     """
-    Return recent chat messages/events from Neo4j, ordered chronologically.
+    Return chronological list of recent chat messages/events (stub).
     """
-    try:
-        user = {"username": "test_user"}  # TEMP AUTH BYPASS
-
-        from core.graph_io import run_read_query
-        results = run_read_query("""
-            MATCH (e:Event)
-            RETURN e
-            ORDER BY e.timestamp DESC
-            LIMIT 50
-        """)
-
-        messages = [
-            {
-                "text": r["e"].get("raw_text", ""),
-                "timestamp": r["e"].get("timestamp", ""),
-                "agent_origin": r["e"].get("agent_origin"),
-                "event_id": r["e"].get("id"),
-                "status": r["e"].get("status")
-            }
-            for r in results if isinstance(r, dict) and "e" in r
-        ]
-
-        log_action("routes/chat", "history", f"Returned chat history to {user['username']}")
-        return jsonify({"history": messages})
-
-    except Exception as e:
-        log_action("routes/chat", "exception", str(e))
-        traceback.print_exc()
-        return jsonify({
-            "error": "Internal Server Error",
-            "detail": str(e)
-        }), 500
+    return jsonify({"history": []})  # TODO: implement when chat memory UI is ready
